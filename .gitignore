@@ -1,0 +1,14 @@
+# Binaries
+/bin/
+*.exe
+*.test
+
+# GoLand
+.idea/
+
+# Claude local personal settings (per-user overrides, not shared)
+.claude/settings.local.json
+
+# Env / secrets
+.env
+*.key
