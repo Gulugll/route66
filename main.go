@@ -1,20 +1,20 @@
 package main
 
 import (
-	"fmt"
+	"log"
+
+	"awesomeProject/internal/api"
+	"awesomeProject/internal/config"
+	"awesomeProject/internal/matrix"
 )
 
-//TIP <p>To run your code, right-click the code and select <b>Run</b>.</p> <p>Alternatively, click
-// the <icon src="AllIcons.Actions.Execute"/> icon in the gutter and select the <b>Run</b> menu item from here.</p>
+// main 是装配层:读配置、拼好各包、启动。只在这里做"接线",不写业务逻辑。
 func main() {
-	//TIP <p>Press <shortcut actionId="ShowIntentionActions"/> when your caret is at the underlined text
-	// to see how GoLand suggests fixing the warning.</p><p>Alternatively, if available, click the lightbulb to view possible fixes.</p>
-	s := "gopher"
-	fmt.Println("Hello and welcome, %s!", s)
+	cfg := config.Load()
 
-	for i := 1; i <= 5; i++ {
-		//TIP <p>To start your debugging session, right-click your code in the editor and select the Debug option.</p> <p>We have set one <icon src="AllIcons.Debugger.Db_set_breakpoint"/> breakpoint
-		// for you, but you can always add more by pressing <shortcut actionId="ToggleLineBreakpoint"/>.</p>
-		fmt.Println("i =", 100/i)
-	}
+	m := matrix.New() // 下一阶段:传入高德 client + Redis
+	r := api.NewRouter(m)
+
+	log.Printf("listening on :%s", cfg.Port)
+	log.Fatal(r.Run(":" + cfg.Port))
 }
