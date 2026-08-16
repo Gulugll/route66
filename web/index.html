@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>路线规划器</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, "PingFang SC", sans-serif; height: 100vh; display: flex; flex-direction: column; color: #222; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: #f7f7f7; border-bottom: 1px solid #e0e0e0; }
+  header h1 { font-size: 18px; }
+  #settingsBtn { padding: 6px 14px; border: 1px solid #ccc; border-radius: 6px; background: #fff; font-size: 13px; }
+  main { flex: 1; display: flex; min-height: 0; }
+
+  /* 左:控制面板 */
+  #panel { width: 330px; padding: 16px; overflow-y: auto; border-right: 1px solid #e0e0e0; display: flex; flex-direction: column; gap: 12px; }
+  #panel h2 { font-size: 14px; color: #555; }
+  #pointList { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  #pointList li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: #f2f6ff; border: 1px solid #d6e0f5; border-radius: 6px; font-size: 13px; }
+  #pointList li .badge { flex-shrink: 0; font-size: 11px; color: #1a73e8; background: #e8f0fe; padding: 1px 6px; border-radius: 10px; }
+  #pointList li .coords { color: #888; font-size: 11px; margin-left: auto; }
+  #pointList li button { border: none; background: none; color: #d93025; cursor: pointer; font-size: 13px; }
+  #addForm { display: flex; flex-direction: column; gap: 6px; }
+  #addForm input { padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
+  #addBtn { padding: 8px; border: 1px solid #ccc; border-radius: 6px; background: #fff; font-size: 13px; }
+  #planBtn { padding: 10px; border: none; border-radius: 6px; background: #1a73e8; color: #fff; font-size: 14px; }
+  #result { font-size: 13px; line-height: 1.8; background: #fafafa; padding: 10px; border-radius: 6px; border: 1px solid #eee; }
+  #result:empty { display: none; }
+  #result b { color: #1a73e8; }
+
+  /* 右:地图 */
+  #map { flex: 1; position: relative; background: #fafafa; }
+  #mapHint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; color: #888; font-size: 14px; line-height: 1.8; }
+  .hidden { display: none !important; }
+
+  /* 设置弹层 */
+  #settingsOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; }
+  #settingsBox { width: 380px; background: #fff; border-radius: 10px; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+  #settingsBox h2 { font-size: 16px; }
+  #settingsBox label { font-size: 13px; color: #555; }
+  #settingsBox input { padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+  #settingsBox .hint { font-size: 12px; color: #888; line-height: 1.6; }
+  #settingsBox .row { display: flex; gap: 8px; }
+  #settingsBox .row button { flex: 1; padding: 8px; border-radius: 6px; font-size: 13px; }
+  #saveKeyBtn { border: none; background: #1a73e8; color: #fff; }
+  #closeSettingsBtn { border: 1px solid #ccc; background: #fff; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🗺️ 路线规划器</h1>
+  <button id="settingsBtn">设置</button>
+</header>
+
+<main>
+  <section id="panel">
+    <h2>地点列表(第 1 个是起点)</h2>
+    <ul id="pointList"></ul>
+
+    <div id="addForm">
+      <input id="nameInput" placeholder="名称,如 广州塔">
+      <input id="latInput" placeholder="纬度,如 23.1066">
+      <input id="lngInput" placeholder="经度,如 113.3245">
+      <button id="addBtn">➕ 添加</button>
+    </div>
+
+    <button id="planBtn">🚀 开始规划</button>
+    <div id="result"></div>
+  </section>
+
+  <div id="map">
+    <div id="mapHint">未配置高德 JS key,当前用手动输入选点。<br>点右上角「设置」填入你自己的 key。</div>
+  </div>
+</main>
+
+<!-- 设置弹层:key 由使用者自己配置(开源),存浏览器本地,不进代码仓库 -->
+<div id="settingsOverlay" class="hidden">
+  <div id="settingsBox">
+    <h2>设置</h2>
+    <label for="keyInput">高德 JS API Key</label>
+    <input id="keyInput" placeholder="粘贴你的 JS key">
+    <p class="hint">这是开源项目,key 由使用者自己申请配置。<br>
+      申请时要把当前域名加入白名单,并开启「安全密钥」。</p>
+    <div class="row">
+      <button id="saveKeyBtn">保存并重载地图</button>
+      <button id="closeSettingsBtn">取消</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
