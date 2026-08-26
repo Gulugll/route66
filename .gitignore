@@ -21,3 +21,4 @@
 # Locally compiled Redis (Docker unavailable in this env)
 .redis-src/
 .DS_Store
+.npmcache/
