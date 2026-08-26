@@ -12,3 +12,12 @@
 # Env / secrets
 .env
 *.key
+
+# Local toolchain caches (sandbox workarounds, not project code)
+.gocache/
+.gopath/
+.gomodcache/
+
+# Locally compiled Redis (Docker unavailable in this env)
+.redis-src/
+.DS_Store
