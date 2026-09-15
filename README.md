@@ -4,7 +4,7 @@
 
 **多点路线智能规划器 · 手写 TSP · 多出行方式 · 极客教学项目**
 
-`Go` · `Gin` · `高德地图` · `手写TSP` · `Redis` · `原生前端`
+`Go` · `Gin` · `高德地图` · `手写TSP` · `Redis` · `React 19`
 
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev/)
 [![Gin](https://img.shields.io/badge/Gin-1.12-008ECF?style=for-the-badge&logo=gin&logoColor=white)](https://gin-gonic.com/)
@@ -34,7 +34,8 @@
 | 🎯 **TSP 路径优化** | 手写求解器 | 最近邻 → 2-opt → 模拟退火，一步步看解变好 |
 | 🚗🚶🚌 **多出行方式** | 驾车 / 步行 / 公交 | 每种方式走不同高德接口，实测距离差异 |
 | 🔀 **混合出行** | 每段路独立选方式 | 步行→公交→驾车，按你的方式导航 |
-| 🖱️ **拖拽排序** | SortableJS 原生实现 | 想手动控制顺序就手动，想优化就交给算法 |
+| 🖱️ **拖拽排序** | 原生 HTML5 DnD，零依赖 | 想手动控制顺序就手动，想优化就交给算法 |
+| ⚛️ **React 前端** | React 19 + Vite | `useState` 描述状态，不再手写 DOM 操作 |
 | 🗺️ **地图点选** | 高德 JS API | 点地图即加地点，搜索地名自动带坐标 |
 | 🎨 **彩色路线 + 图例** | 每段一种颜色 | 颜色即出行方式，一眼看懂 |
 | ⚡ **双重缓存** | Redis + 内存 | 缓存命中零外部请求，重启跨进程存活 |
@@ -45,14 +46,14 @@
 ```
 ┌─────────────────────────┬──────────────────────────────────┐
 │  🔍 搜索添加地点          │   🗺️  高德地图                    │
-│  [广州塔      ] [搜索]     │        ·· 起点                    │
+│  [故宫        ] [搜索]     │        ·· 起点                    │
 │  [城市(可选)          ]   │     🟦━━━━━┓                      │
 │  ───────────────         │     🟩━━━━▓▓▓  (步行)             │
-│  ✓ 起点  广州塔          │     🟧━━━━━━━┛  (公交)             │
+│  ✓ 起点  天安门          │     🟧━━━━━━━┛  (公交)             │
 │    ──🚗🚶🚌──            │                                │
-│  ✓ 第1站  白云山          │   [图例] 🟦驾车 🟩步行 🟧公交       │
+│  ✓ 第1站  故宫            │   [图例] 🟦驾车 🟩步行 🟧公交       │
 │    ──🚗🚶🚌──            │                                │
-│  ✓ 第2站  长隆            │                                │
+│  ✓ 第2站  天坛            │                                │
 │  ☐ 手动设置每段出行方式✓    │                                │
 │  [🚀 开始规划]            │                                │
 └─────────────────────────┴──────────────────────────────────┘
@@ -64,9 +65,9 @@
                     ┌──────────────────────────────┐
   浏览器(前端)        │        Go 后端 (Gin)          │
   ┌─────────┐       │  ┌────────────────────────┐  │      ┌────────────┐
-  │ HTML/JS  │──────▶│  │  /plan  /search /route │  │─────▶│  高德 Web   │
+  │ React    │──────▶│  │  /plan  /search /route │  │─────▶│  高德 Web   │
   │ 高德JSAPI│       │  │   (API 代理层)          │  │      │  服务 API   │
-  │ Sortable │       │  └──────────┬─────────────┘  │      └────────────┘
+  │ Vite 产物│       │  └──────────┬─────────────┘  │      └────────────┘
   └─────────┘       │             │                │
                     │  ┌──────────▼─────────────┐  │      ┌────────────┐
                     │  │  matrix (距离矩阵)       │  │      │ Redis/内存  │
@@ -95,15 +96,33 @@
 
 - **Go 1.26+**
 - **(可选) Redis 7** —— 不装也能跑，自动降级内存缓存
+- **(可选) Node 20+** —— 只在你要构建/改前端时需要（源码在 `frontend/`）
 
 ### 1. 申请高德 key（免费）
 
-高德开放平台 [console.amap.com](https://console.amap.com) → 实名认证 → 创建应用 → 添加 **两个 key**：
+高德开放平台 [console.amap.com](https://console.amap.com) → 实名认证 → 创建应用。
 
-| Key 类型 | 平台 | 用途 | 配置方式 |
-|---|---|---|---|
-| **Web 服务 key** | Web服务 | 后端算距离/搜索/路线 | 环境变量 `AMAP_KEY` |
-| **JS API key** | Web端(JS API) | 前端地图渲染 | 网页「设置」里填 |
+**高德是按「服务平台」分权的，不是按 key 分的**——所以一个应用下**只申请一把 key，
+在「服务平台」里把两个都勾上**就够了，不必申请两把：
+
+| 平台 | 用途 | 配在哪 |
+|---|---|---|
+| **Web服务** | 后端算距离 / 搜地名 / 取路网轨迹（REST） | 服务端环境变量 `AMAP_KEY` |
+| **Web端(JS API)** | 浏览器渲染地图（+ 可选的前端直连搜索） | 网页右上角「设置」里填 |
+
+> 分成两把 key 也完全可以，只是要分别配到上面两个地方。**能省就省：一把 + 两个平台。**
+
+**JS key 还有个必填项：安全密钥。** 2021-12-02 之后申请的 key，JS API 2.0 强制要求在
+「设置」里一并填上控制台给出的那串安全密钥。**不填的现象很有欺骗性：地图能正常显示，
+但搜索、算距离这类能力全部失败**——因为纯渲染地图不需要它，而要调接口的能力都需要。
+
+**报错码 → 病因**（配错了直接对着这张表查）：
+
+| 高德返回 | 含义 | 怎么办 |
+|---|---|---|
+| `INVALID_USER_KEY` (10001) | 高德不认识这把 key | key 抄错了，或已被删除 |
+| `USERKEY_PLAT_NOMATCH` (10009) | key 有效，但没绑定你要的平台 | 去控制台给这把 key **追加**对应平台 |
+| `INVALID_USER_SCODE` | 缺（或错）安全密钥 | 在网页「设置」里把安全密钥填上 |
 
 ### 2. 启动
 
@@ -119,7 +138,10 @@ go run .
 open http://localhost:7800
 ```
 
-打开页面 → 右上角「设置」→ 填 JS API key → 保存重载。
+打开页面 → 右上角「设置」→ 填 JS API key（有安全密钥就一起填）→ 保存重载。
+
+> 换 `AMAP_KEY` 必须**重启后端**才生效（它是启动时读的环境变量）；
+> JS key 则是点「保存并重载地图」即时生效。
 
 ### 3. 用起来
 
@@ -129,6 +151,40 @@ open http://localhost:7800
 4. 每段路上选 🚗🚶🚌 出行方式
 5. **🚀 开始规划** → 看彩色路线 + 总距离
 
+### 4. 前端（React 19 + Vite）
+
+`frontend/` 是 React 源码，构建产物直接输出到 `web/`，由 Go 托管在**站点根路径**。
+产物不进仓库（`.gitignore` 掉了整个 `web/`），所以 clone 后要先构建一次：
+
+```bash
+cd frontend
+npm install
+npm run build      # 产物输出到 ../web/（index.html + assets/）
+```
+
+改前端时别每次构建，用 Vite 的开发服务器，带热更新（改完代码浏览器立刻变）：
+
+```bash
+cd frontend
+npm run dev        # 打开 http://localhost:5173
+```
+
+> 开发服务器已经把 `/plan` `/search` `/route` 代理到 `localhost:7800`，
+> 所以后端还是照常 `go run .` 起在 7800，两个进程同时跑。
+
+**为什么产物丢进 `web/` 就能跑**：`router.go` 里有一句 `r.NoRoute(http.FileServer(http.Dir("web")))`，
+它托管的是整个 `web/` 目录 —— 产物落在那里，前端就自动出现在根路径，**Go 代码一行都不用改**。
+
+> ⚠️ `vite.config.js` 里的 `base` 和 `outDir` 是**一对**，必须指向同一个位置：
+> `base` 决定 HTML 里资源路径怎么写（`/assets/...`），`outDir` 决定文件实际放哪。
+> 只改一个就会出现"页面能开、JS 全 404"。
+
+> **这段前端是从手写原生 JS 重写过来的。** 原来那一版（`web/app.js` + `web/index.html`，
+> 用 SortableJS 拖拽）已经删除，但它的教训留在了 `AGENTS.md` 和 `docs/architecture-diagrams.md`：
+> `renderList()` 全量重建 `<li>` 会让拖拽库持有的元素引用失效（必须 `destroy()` 再 `new`）；
+> 删点要同时 `splice` `points` 和 `legs` 两个平行数组，忘一个就错位。
+> 这两类 bug 正是 React 用 `key` 和单一数据源解决的。
+
 ## 📡 API
 
 ### `POST /plan` —— 规划路线
@@ -137,39 +193,64 @@ open http://localhost:7800
 curl -X POST http://localhost:7800/plan \
   -H 'Content-Type: application/json' \
   -d '{
-    "origin": {"name":"广州塔","lat":23.1066,"lng":113.3245},
+    "origin": {"name":"天安门","lat":39.9087,"lng":116.3975},
     "destinations": [
-      {"name":"白云山","lat":23.1835,"lng":113.3042},
-      {"name":"长隆","lat":23.0012,"lng":113.3274}
+      {"name":"故宫","lat":39.9163,"lng":116.3972},
+      {"name":"天坛","lat":39.8822,"lng":116.4066}
     ],
-    "mode": "driving",              // driving | walking | transit
+    "mode": "driving",                 // driving | walking | transit(非法值 → 400)
     "segments": ["walking","transit"]  // 混合出行:每段一种方式
   }'
 ```
 
 ```json
-{"order":["广州塔","长隆","白云山"], "total_km":45.44}
+{"order": ["天安门","故宫","天坛"],      // 给人看的:名字
+ "order_idx": [0,1,2],                  // 给机器用的:下标(画线按下标取点)
+ "total_km": 6.8,
+ "warnings": [],
+ "degraded": [],
+ "is_degraded": false}
 ```
+
+> 为什么 `order` 和 `order_idx` 都要给:**名字不是标识符**。用户搜两次"故宫"就会有
+> 两个同名点,前端拿名字回查坐标只能查到一个,线就画错了。名字负责人看,下标负责机器用。
 
 | 参数 | 说明 |
 |---|---|
 | `origin` / `destinations` | 起点 + 目的地点列表 |
-| `mode` | 全局出行方式（默认 `driving`）|
+| `mode` | 全局出行方式（默认 `driving`）；**白名单校验**，非法值返回 400 |
 | `segments` | 混合出行，`segments[i]` = 第 i 段方式（长度 = 点数-1）|
 | `manual` | `true` 按列表顺序，跳过 TSP |
+
+**点数上限按出行方式分档**（理由见 `internal/api/router.go` 里的算账注释）：
+
+| 路径 | 上限 | 为什么 |
+|---|---|---|
+| 单一驾车 | 50 | 走 `v3/distance` 批量接口，n 个点只要 n 次请求 |
+| 步行 / 公交 / 混合出行 | **10** | 逐对请求 + 350ms 节流，10 点约 32 s 已经是能忍的极限 |
+
+**降级会显式回传**：`is_degraded=true` + `warnings` 说明哪些数字是直线估算。
+（高德整体挂掉 → 一条覆盖全线的警告；混合出行某段挂掉 → 只报那一段。）
 
 ### `GET /search?q=关键词&city=可选` —— 地名搜索
 
 ```bash
-curl "http://localhost:7800/search?q=西湖&city=杭州"
+curl "http://localhost:7800/search?q=故宫&city=北京"
 ```
 ```json
-{"places":[{"name":"杭州西湖风景名胜区","address":"...","lat":30.24,"lng":120.14}]}
+{"places":[{"name":"故宫博物院","address":"景山前街4号","lat":39.9163,"lng":116.3972}]}
 ```
 
 ### `GET /route?origin=lng,lat&dest=lng,lat&mode=driving` —— 真实路网轨迹
 
-返回一串 `[lng,lat]` 坐标，前端拼成折线。
+注意 `origin` / `dest` 是 **`经度,纬度`**（和高德一致，经度在前）。
+
+```bash
+curl "http://localhost:7800/route?origin=116.3975,39.9087&dest=116.3972,39.9163&mode=driving"
+```
+
+返回一串 `[lng,lat]` 坐标，前端拼成折线。`mode` 非法 → 400；`mode=transit` 返回空数组
+（公交由"步行段+公交段"拼成，轨迹天然不连续 → 前端画直线，这是业务事实不是错误）。
 
 ## 🗂️ 项目结构
 
@@ -177,18 +258,53 @@ curl "http://localhost:7800/search?q=西湖&city=杭州"
 route66/
 ├── main.go                 # 装配层:读配置、组装、启动
 ├── internal/
-│   ├── api/router.go       # Gin 路由: /plan /search /route
-│   ├── matrix/             # 距离矩阵(高德→haversine 降级)
+│   ├── api/router.go       # Gin 路由: /plan /search /route + 参数校验 + 降级上报
+│   ├── matrix/             # 距离矩阵(高德→haversine 降级,并上报"降级了")
 │   ├── solver/             # 手写 TSP:最近邻→2-opt→模拟退火
-│   ├── amap/               # 高德 Web 服务客户端
+│   ├── amap/               # 高德 Web 服务客户端(路径常量化,根地址可替换)
 │   ├── cache/              # 缓存抽象:内存 / Redis
 │   ├── config/             # 环境变量配置
 │   └── model/              # Point / Place / Mode
-└── web/                    # 前端(无框架,原生 HTML/JS)
-    ├── index.html
-    ├── app.js
-    └── vendor/sortable.min.js
+├── frontend/               # 前端源码(React 19 + Vite)
+│   ├── src/
+│   │   ├── App.jsx             # 组合根:状态提升到这里,再往下分发
+│   │   ├── api.js              # 后端接口唯一出口(fetch 封装 + 错误归一化)
+│   │   ├── theme.js            # 设计变量的 JS 侧(地图折线要用)
+│   │   ├── components/         # 组件:一个文件一个组件
+│   │   ├── hooks/              # 状态逻辑(usePoints / useAmap / usePlan …)
+│   │   └── styles/             # tokens.css(设计变量) + app.css(组件样式)
+│   ├── vite.config.js          # base:'/' + outDir:'../web'(两者必须同指一处) + dev 代理到 7800
+│   └── package.json
+├── web/                    # ← 构建产物(gitignore,由 npm run build 生成) —— 托管在站点根路径
+│   ├── index.html
+│   └── assets/
+├── docs/
+│   ├── architecture-diagrams.md   # 架构图(Mermaid) + 设计原则
+│   └── superpowers/specs/         # 最初的设计文档
+└── scripts/smoke.sh        # 真 key 冒烟测试(单测抓不到真实 API 行为)
 ```
+
+前端地图默认视野是**北京**（`frontend/src/theme.js` 的 `DEFAULT_CENTER = [116.397, 39.909]`，
+注意高德是**经度在前**），后续可接 `navigator.geolocation` 用真实定位覆盖它——代码里留了 TODO 说明注意事项。
+
+**Go 那边为什么一行都不用改**：`internal/api/router.go` 里是
+`r.NoRoute(http.FileServer(http.Dir("web")))` —— 它托管的是整个 `web/` 目录，
+所以只要构建产物落在 `web/`，前端就自动出现在站点根路径 `/`，无需新增路由。
+
+## ❓ 排查：几个"看着像 bug"的配置问题
+
+配 key 这件事有两处地方、三样东西，最容易在这里耗时间。按现象对号入座：
+
+| 现象 | 原因 | 怎么修 |
+|---|---|---|
+| 搜索弹「未配置 AMAP_KEY,搜索不可用」 | 后端启动时没读到 `AMAP_KEY`（它只认环境变量，不读网页里填的 key） | `export AMAP_KEY=...` 后**重启后端** |
+| 后端报 `USERKEY_PLAT_NOMATCH`(10009) | 拿浏览器那把 JS key 当后端 key 用了 | 控制台给这把 key 追加「Web服务」平台 |
+| 地图全白，提示「还没配置高德 Key」 | 当前浏览器里没填 JS key（它有**换浏览器就没了**的特性，因为存在 localStorage） | 在当前浏览器右上角「设置」里填一次 |
+| 地图正常，但搜索永远失败（`INVALID_USER_SCODE`） | 漏填安全密钥 | 控制台复制安全密钥，填进「设置」 |
+| 总距离明显偏小、像直线 | 后端降级到 haversine 了 | 看响应里的 `is_degraded` 和 `degraded`，它会告诉你哪几段不是真实路网 |
+
+> 一句话记住分工：**网页「设置」= 地图；环境变量 `AMAP_KEY` = 距离、搜索、轨迹。**
+> 两把 key 可以合成一把（同一个 key 勾两个平台）。
 
 ## 🎓 教学价值
 
