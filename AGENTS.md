@@ -37,11 +37,282 @@
 - API + 简单 HTML 页面（不做完整前端）
 - 单进程演进 → 再拆 gRPC（方案 A）
 - 端口 **7800**（用户指定，避免冲突）
-- **前端先行、前后端分离**：页面是独立 HTML/JS，gin NoRoute 托管 web/，与 API 同源无 CORS
-- **路线绘制：目前前端画直线**（匹配 haversine 直线距离），以后接高德再升级真实路网 polyline
+- **前端先行、前后端分离**：页面是独立前端，gin NoRoute 托管 `web/`，与 API 同源无 CORS
+- **前端 = React 19 + Vite**（2026-09-14 定稿）：源码 `frontend/`，构建产物输出到 `web/`
+  （`vite.config.js` 里 `base:'/'` + `outDir:'../web'`，**这两个必须同指一处**，只改一个就 404），
+  由 Go 托管在**站点根路径 `/`**。
+  **手写原生 JS 版（`web/app.js` + `web/index.html` + SortableJS）已删除** ——
+  它踩过的坑（`renderList()` 全量重建导致拖拽库引用失效、删点要同步两个平行数组）
+  记在本文档 2026-08-20 条目里，是"React 用 key + 单一数据源解决了什么"的活教材
+- **视觉基准**：墨色 `#1D1D1F` = 唯一交互色；蓝 `#0066CC` = 只给「驾车」语义
+  （绿=步行、橙=公交）。设计变量在 `frontend/src/styles/tokens.css` + `frontend/src/theme.js`
+- **路线绘制**：前端调 `/route` 拿真实路网 polyline；拿不到（公交无轨迹 / 请求失败）时该段退化为直线
 - **开源：key 由使用者自配**——前端 JS key 存浏览器 localStorage（设置面板可换，进 settingsOverlay）；后端将来用的高德 Web 服务 key 走环境变量 AMAP_KEY
+  - ⚠️ **高德的两类 key 不能混用**（按「服务平台」划分）：前端地图要 **Web端(JS API)**，
+    后端 REST 要 **Web服务**。同一个 key 可在控制台**追加多个平台**，不必申请两把。
+    报错码：`INVALID_USER_KEY`(10001)=key 不存在；`USERKEY_PLAT_NOMATCH`(10009)=平台不对；
+    `INVALID_USER_SCODE`=缺**安全密钥**（2021-12-02 后申请的 key，JS API 2.0 强制要求，
+    **纯地图渲染不需要它，但凡要调接口的能力都需要**）
+  - ⚠️ **`AMAP` 就是高德**（AutoNavi Map），环境变量叫 `AMAP_KEY` 容易让人以为要接第二个厂商 ——
+    用户 2026-09-14 就踩了这个理解坑，文档/UI 里凡提到 key 都要顺手讲清"只有高德一家"
 
 ## 进度追踪
+
+### 2026-09-14（DSH 会话 · 三续）— 排查"搜索为什么不管用" + 订正会误导人的文案 ✅
+
+用户原话："为什么搜索地址不管用呢，是因为 amap 的 api 一定要，不能走高德的 api 吗"
+→ 暴露了一个**理解坑：以为 AMAP 和高德是两个厂商**（AMAP 就是高德 / AutoNavi Map）。
+
+- **三层实测**（浏览器注入 key + curl，结论有据可查）：
+  | 能力 | 需要 | 结果 |
+  |---|---|---|
+  | 地图渲染 | JS key | ✅ `typeof AMap==='object'`、canvas 已创建 → key 有效、localhost 在域名白名单 |
+  | 前端直连搜索 `AMap.PlaceSearch` | JS key **+ 安全密钥** | ❌ `INVALID_USER_SCODE`（`_AMapSecurityConfig` 为 null） |
+  | 后端 `/search`（REST） | Web服务平台的 key | ❌ 503「未配置 AMAP_KEY」（进程环境里 0 条）+ 10009 |
+- **修了 3 处"承诺了做不到的事"的文案** ⭐（都是这次卡点的直接原因）：
+  - `SettingsDialog.jsx`：安全密钥标签去掉「（可选）」、placeholder 改「必填」；
+    hint 重写成三句：这个框只管浏览器端地图 / 安全密钥为什么不能留空 / 后端另需 Web服务 key（两把可合成一把）
+  - `MapView.jsx` 无 key 空态：原文"填入后即可查看真实路网与驾车轨迹"是**错的**——
+    真实路网靠后端 `/route`，要的是服务端那把 key；改成"填 JS key 显示地图 / 真实路网另配 AMAP_KEY"
+  - `api.js`：新增 `ERROR_HINTS` + `withHint()`，把后端「未配置 AMAP_KEY,搜索不可用」
+    补成"……后端要的是 Web服务平台的 key，不是浏览器里那把 JS key（见 README）"——
+    **错误信息要能被行动**，否则用户只知道"缺东西"、不知道去哪儿补
+- **`README.md`**：§1 重写（**一把 key 勾两个平台即可，不必申请两把** / 安全密钥必填的欺骗性现象 /
+  「报错码 → 病因」表）；新增 **「❓ 排查」** 一节（5 条 现象→原因→修法，含"换浏览器 JS key 就没了"）
+- `architecture-diagrams.md` 技术栈表补安全密钥；本文件「关键决策」补 `INVALID_USER_SCODE` 与 AMAP 命名澄清
+- **验证**：vite build 82ms；浏览器实测弹层 378px < 视口 577px（不溢出）、
+  `.dialog-hint strong` 计算 font-weight = 700、搜索失败 toast 实测输出带补全文案
+
+**⏭️ 下次继续（接手清单，别重新排查一遍）**
+
+0. **2026-09-15 已完成（见 memory/2026-09-15.md 详情）**：① `drivingMatrix` 逐列并发
+   （`maxColumnConcurrent=4` 信号量限流 + 教学注释，3 个新测试 + 2 个旧测试并发适配，
+   `-race` 全绿 + 变异验证）；② 前端"自动模式"重做成 radio 卡片并改默认自动
+   （原功能一直存在，被"默认手动 + 反向 checkbox"埋没）。**并发改造下一步 = context 贯穿**；
+   `maxColumnConcurrent` 等 key 加上 Web服务 平台后按真实 QPS 调参
+
+1. **用户待办 · 控制台**：给 key `2d47…2c61` 编辑 → 勾选 **「Web服务」** 平台（**保留 JS API 不动**）→ 提交。
+   key 值不变，不用改代码；「安全密钥」也可顺手一起复制
+2. **然后重启服务**：`set -a; source .env; set +a; go run .`（`.env` 已在、已被 gitignore；
+   上次跑的服务**没加载 `.env`**，所以 `AMAP_KEY` 在进程环境里是 0 条 → 什么都会报"未配置"）
+3. **跑冒烟**：`./scripts/smoke.sh` —— 12 条断言，含"3 固定点驾车真实路网 ≈45km vs 直线 ≈29km"
+   这个**识破假降级**的判据。无 key 模式下它是 6 通过 6 失败，失败项应精确指向"未配置 AMAP_KEY"
+4. **补测 6 项**（上轮因无 key 跳过）：地图渲染与地图点选 · 搜索成功候选 · `/route` 真实路网绘制 ·
+   `is_degraded` 降级警告条 · 图例显示 · `setFitView` 缩放
+5. **环境现状**：Redis 6379 **未启动**（二进制在 `.redis-src/redis-7.2.5/src/redis-server`）；
+   MySQL 容器 `routeplanner-mysql` 仍在跑（3306 / 库 `routeplanner`）；7800 已释放
+6. **积压未提交**：约 10 个修改文件 + 3 个暂存删除（`web/index.html`、`app.js`、`vendor/`）
+
+### 2026-09-14（DSH 会话 · 下半场续）— React 版功能实测 + 删旧版 + 根路径接管 ✅
+
+用户原话："直接启动 react 版本的，然后测试功能，功能没问题的话旧版的前端可以删了"。
+
+- **浏览器实测（真实 Chromium，14 项全过）**：页面渲染 · 手动输入坐标加点 · 列表编号 ·
+  每段出行方式切换 · 手动/自动模式切换 · **拖拽排序**（天坛拖到首位，顺序正确变化且点数不变）·
+  拖拽连带行为（badge 重编号 · **旧结果自动作废** · legMode 重置）· 删除点 ·
+  自动模式 TSP（天安门→故宫→天坛 **4.7 km**，与后端实测一致）·
+  13 点 TSP（**159.2 km**，顺序明显重排）· 手动模式 503 → **就地错误条** ·
+  搜索失败 → **toast**（替代旧版 `alert()`）· 设置弹层（开 / 取消 / **Esc 关闭**）·
+  空 key **字段级校验**（弹层不关、不写 localStorage）·
+  **点数上限分档**（13 点手动模式按钮禁用 + 给出原因，切自动模式立刻放行）· 地图无 key 空态
+- **未测（都依赖 key）**：地图渲染与地图点选、搜索成功路径、`/route` 真实路网绘制、
+  降级警告（`is_degraded`）、图例 / 缩放 / `setFitView`
+- **删旧版 + 根路径接管** ⭐：
+  - `vite.config.js`：`base: '/app/'` → `'/'`，`outDir: '../web/app'` → `'../web'`
+    —— **base 与 outDir 是一对，必须同指一处**（base 决定 HTML 里资源路径怎么写，
+    outDir 决定文件放哪；只改一个就"页面能开、JS 全 404"）
+  - 重新构建（101ms）→ `web/` 下只剩 `index.html` + `assets/`；
+    `emptyOutDir` 顺便清掉了旧的 `index.html` / `app.js` / `vendor/`
+  - 实测：`/` → **200**（React 版）· `/assets/*.js|css` → **200** · 旧路径 `/app/` → **404**（预期）
+  - `.gitignore`：`/web/app/` → **`/web/`**（整个目录都是产物）；
+    `frontend/.gitignore` 里的 `dist/` 是**无效规则**（outDir 不在那），改成说明"产物在 `../web`"
+  - 旧版文件备份在 `/tmp/rp-oldfrontend/`；git 里也能恢复（`git checkout -- web/`）
+- **测试工具踩坑**（可复用）：
+  - `agent-browser drag` **驱动不了 HTML5 DnD**——它内部用鼠标事件模拟，不触发 `dragstart`。
+    正确姿势是原生 `DragEvent` 派发：`new DataTransfer()` +
+    依次 `dragstart` / `dragover`(要 `preventDefault`) / `drop` / `dragend`
+  - **元素在视口外时 `fill`/`click` 会"返回 ✓ Done 但什么也没发生"**。
+    批量填 React 受控输入用 `HTMLInputElement.prototype.value` 的 setter + 派发 `input` 事件
+  - 安装：`npm i -g agent-browser && agent-browser install`（会下 182MB Chrome，约 1 分钟）
+- **macOS 坑（重要）**：BSD `grep` **不支持 `\|`** 这种 BRE 写法（会被当字面量 → 假 0 结果），
+  必须用 `grep -E`。本会话据此修正过一次错误结论
+
+### 2026-09-14（DSH 会话 · 下半场）— React 版前端（用户要求「用 React 实现这个」）✅
+
+用户想**同步学 React**，所以这一轮不只是改前端，而是"用 React 重写一遍"作为对照。
+
+- **新增 `frontend/`**：React 19.3 + Vite 8.3，纯 JSX（不上 TS，先专注 React 本身）
+- **构建产物输出到 `web/app/`，Go 一行都没改** ⭐
+  `router.go` 的 `NoRoute(http.FileServer(http.Dir("web")))` 托管的是整个 `web/` 目录，
+  所以产物落进 `web/app/`，React 版自动出现在 `/app/`。
+  **旧手写版留在 `/`，两版并存可对照** —— 这是本次最省事的集成方式
+- **开发体验**：`vite.config.js` 里 `base: '/app/'` + `server.proxy` 把
+  `/plan` `/search` `/route` 代理到 7800。开发时跑 `npm run dev`（5173，带 HMR），
+  后端照常 `go run .`，两个进程同时跑
+- **构建产物 gitignore**（`/web/app/`、`/frontend/node_modules/`）：产物能由源码再生，不进仓库
+
+#### 组件拆分（`frontend/src/`）
+
+```
+App.jsx（组合根：持有 points/manual/key，定义业务规则，摆版面）
+├── TopBar / ControlPanel / MapView / SettingsDialog / ToastStack
+components: ControlPanel → SearchModule / PointList(+LegRow) / PlanOptions /
+            PlanAction / ResultCard
+hooks:      usePoints(增删改排) · useAmap(地图生命周期) · usePlan(异步链路+阶段)
+            useSettings(key 持久化) · useToasts(提示条)
+styles:     tokens.css(设计变量) + app.css(组件样式)
+theme.js:   设计变量的 JS 侧镜像（地图折线读不到 CSS 变量）
+```
+
+#### 解决了手写版的哪些问题（这是这轮的核心价值）
+
+| 手写版的问题 | React 版 |
+|---|---|
+| `renderList()` 全量重建 `<li>` → Sortable 引用失效 → 必须 `destroy()` 再 `new` + `initSortable()` 可重入 | **不需要了**。React 靠 `key` 认出节点身份，重排是**移动**而不是重建，第三方持有者不会失效 |
+| 删点要同时 `splice` `points` 和 `legs` 两个平行数组，忘一个就错位 | `legMode` 挂在点上，"每段方式"成为点自带的属性，只剩一个数组 |
+| 错误全靠 `alert()` | 字段级内联错误（手动坐标）+ 就地错误条（规划失败）+ 顶部提示条（搜索失败），**三者按"用户需不需要对着它办事"分工** |
+| 无 loading / 无进度 | `phase` 状态机 `idle → submitting → drawing → done`，如实驱动三段进度 |
+| `esc()` 防 XSS | 消失。JSX 的 `{变量}` 天然是文本节点（和 Go `html/template` 同一类保障） |
+| 颜色写三份（CSS / `modeColor()` / 图例） | `tokens.css`(CSS 侧) + `theme.js`(JS 侧) 单一来源，且 `theme.js` 在 dev 下会**运行时断言**两者一致 |
+| 主色 `#1a73e8` 与「驾车」语义色撞车 | 墨色 `#1D1D1F` = 唯一交互色；蓝色只留给「驾车」 |
+| SortableJS 依赖（本地托管 40KB） | 去掉，改用原生 HTML5 DnD + state，**零依赖** |
+
+#### 踩坑记录（都写进代码注释了）
+
+- ⭐ **跨事件传值不要只放 state**：拖拽的 `dragIndex` 若只用 `useState`，
+  `drop` 处理器可能读到旧闭包里的 `null`。真实拖拽时中间有 `dragover` 触发的重渲染
+  "碰巧"掩盖了它 —— **正确做法是放 `useRef`**（写入立即生效），state 只管视觉。
+  这个问题是自动化测试抓出来的，人工点鼠标测不出来
+- **`useAmap` 要拆两个 effect**：创建地图的 effect 的 cleanup 拿不到刚建好的实例
+  （闭包捕获的是 effect 运行那一刻的值）。销毁必须单独写一个依赖 `[map]` 的 effect
+- **`<ul>` 里只放 `<li>`**：把"段连接线"塞进同一个 `li` 的内部，
+  拖拽下标的换算就消失了（手写版正是把连接线插在中间，才必须改用 `oldDraggableIndex`）
+- **地图覆盖物没有增量接口**：只能"全删重画"。十几个点无所谓，
+  几千个点就得自己写差集（React 的 diff 只管它渲染的 DOM，管不到第三方库内部对象）
+
+#### 验证方式
+
+用 `puppeteer-core` 驱动本机 Chrome 跑了 12 条断言，**全部通过**：
+空态不误报错 · 加 3 点 · **拖拽重排后顺序与起点徽标同步** · 拖回原顺序 ·
+字段级校验拦截 · 规划失败就地报错条 · 关掉手动模式后规划成功（5.1 km）·
+成功后错误条自动清除 · 搜索失败弹提示条 · 只剩 1 点时按钮禁用并给原因。
+控制台除 4 条预期的 503 网络日志外无任何 React 警告（StrictMode 下通过 = 清理函数干净）。
+
+**遗留**：①React 版目前只跑了无 key 模式，有 key 时的地图渲染/折线未实测
+②`web/app/` 是产物，`go run .` 前需先 `npm run build`
+③两个前端并存的迁移收尾（想切换成 React 单版就把 `base` 改 `/`、`outDir` 改 `../web`）
+
+### 2026-09-14（DSH 会话 · 上半场）— 代码审查 + 修复 12 个问题 + api 层测试补齐 ✅
+
+- **一次通读式代码审查**（代码 + docs 两份文档 + README + smoke.sh），发现并**修复**：
+  - ⭐ **`/plan` 不校验 `mode`，非法值静默降级**（最严重）：`mode=cycling` → amap 报
+    `unsupported mode` → matrix 吞掉降级 → **返回 200 + haversine 直线 + `is_degraded=false`**。
+    用临时 httptest 探针实测确认（`total_km=15.1055`）。修法：新增 `parseMode()` 白名单，
+    `/plan` 与 `/route` 共用，「同一个参数两个接口一套标准」
+  - ⭐ **`is_degraded` 只说了一半的降级**：`matrix.DistanceMatrix` 签名从 `([][]float64)`
+    改成 `([][]float64, bool)`，把"这张矩阵是降级来的"带出包外；`IsDegraded` 改为
+    `len(warnings) > 0`（单一真相源）。**教学点：降级要上报，就必须进返回值——日志在服务器上，用户看不到**
+  - ⭐ **前端按名字回查坐标 → 重名地点画错线**：后端新增 `order_idx`（下标数组），
+    前端 `drawRoute(orderIdx)` 改用下标，删掉 `pointByName`。**教学点：名字不是标识符**
+  - **点数上限分档**：新增 `MaxPointsPairwise = 10`（逐对/混合出行），驾车仍 50。
+    限制必须按最坏路径算：逐对下 50 点 = 2450 次请求 ≈ 14 分钟
+  - **`/route` 补 mode 校验**；`RoutePolyline` 对未知 mode 改为报错（原来 `default: return nil,nil`
+    把"参数拼错"伪装成"正常返回空"），transit 仍显式返回 `(nil,nil)` 表示"业务上就没轨迹"
+  - **消除重复的 haversine**：导出 `matrix.Haversine(a,b)`，删掉 api 里那份（原注释说"避免循环依赖"
+    是错的——api 本来就 import 了 matrix）
+  - **高德根地址从包级变量改成 `Client` 实例字段** + 路径常量化（`pathDistance`/`pathWalkingV5`…），
+    新增 `NewClientWithBase` 供测试用。**教学点：包级可变状态 = 测试互相干扰 + 加 `t.Parallel()` 就 race**
+  - **`Memory` 缓存补上过期清理**（`sweepThreshold=1024` 时写入前 sweep）：原来只在读同一 key 时才删
+  - **前端 XSS**：新增 `esc()`，所有拼接外部文本的地方（搜索候选/地点名/警告）先转义
+  - **缓存号漏 bump**：`app.js?v=20260827a` → `v=20260914a`（app.js 08-28 改过但没 bump）
+  - `index.html` 内容更新（搜索框/城市框 placeholder 改成故宫/北京）；`.gitignore` 去掉改名前残留的 `/routeplanner`
+- **前端默认视野改为北京**（`DEFAULT_CENTER=[116.397,39.909]`，原来是广州），
+  并在 `initMap` 里留了 **GPS 定位的 TODO**（说明 `navigator.geolocation` 是异步、需 https、
+  失败要安静退回默认中心）。搜索/城市输入框 placeholder 同步改成故宫/北京
+- **新增 `internal/api/router_test.go`（11 个测试函数 + 2 个子测试）** ⭐ —— api 层第一次有测试：
+  - 假高德按路径分发，`failPaths` 能**单独弄坏某一个接口**（`/v3/distance` 或 `/v5/direction/walking`），
+    这是"测得出降级有没有上报"的前提
+  - 覆盖：非法 mode/坐标/segments → 400；点数上限按 mode 分档（12 点步行 400、驾车 200）；
+    TSP 起点不变量；**矩阵整体降级 → `is_degraded=true`**；**没配 key 不算降级**；
+    混合出行只报坏掉那一段；`/route` 非法 mode 400、transit 空数组
+  - 测试里刻意**用字面量写路径**而不是引用 amap 常量、**重写一份 `planRespJSON`** 而不是复用
+    `planResp`——测的是 wire contract，引用内部定义就失去意义了
+  - **验证过测试有牙齿**：临时把 `IsDegraded` 退回旧写法，`TestPlanReportsMatrixDegradation` 立刻红
+- **`amap_test.go` 同步重构**：删掉改包级 `baseURL` + `defer` 还原的老套路，改用 `NewClientWithBase`；
+  新增"搜索经纬度不能解反"和"RoutePolyline 未知 mode 必须报错且不发请求"两个用例
+- **`planResp` 新增 `order_idx`**；README / `architecture-diagrams.md` / 设计文档全部同步
+  - 设计文档文末新增**「附录：与实现的偏差」**（6 条：slog 没用上、**重试未实现**、表名 plans→tasks 等）
+    + 「还没做但已知是债」（重试、缓存击穿、web 相对路径、XSS 彻底方案）
+- **验证**：`go vet ./...` 干净；`go test ./...` 全绿（amap 0.47s、**api 0.65s**、solver）；
+  `node --check web/app.js` 通过；`gofmt` 已格式化 `amap.go`/`router.go`
+  （`internal/model/model.go` 与 `main.go` 仍不合规，未动）
+- **⚠️ 遗留**：08-28 那轮工作（Mermaid 文档 / smoke.sh / 缓存错误处理）**至今未提交**，
+  加上本次改动，`git status` 已积压 8 个改动文件 + 2 个未跟踪目录 —— **建议先 commit 再动 Phase 2**
+- **后续可做**：①指数退避重试 ②缓存击穿（singleflight）③GPS 定位 ④`(0,0)` 坐标应视为"没传"
+  ⑤cache/matrix 层补测试 ⑥`go:embed` 托管前端
+
+### 2026-08-28（DSH 会话）— 项目现状梳理 + Mermaid 架构文档 + 环境就绪 + Phase 2 启动 ⏳
+
+- **通读全项目代码**（main.go + internal 8 个包 + web 两个文件 + README），跑 `go vet ./...` + `go test ./...` 全过（internal/amap 1.0s、internal/solver 1.6s）
+- **`docs/architecture-diagrams.md` 整篇重写为 Mermaid 版** ⭐（原为 718 行 ASCII 图，0 个 mermaid，且未纳入 git）：
+  - 4 张图：系统架构（graph TB）、包依赖（graph LR + 依赖规则表）、`/plan` 数据流（flowchart，含两条分支）、一次规划时序图（sequenceDiagram，含缓存命中路径）
+  - 另加：三层降级 flowchart、降级决策表、缓存 key 设计、API 速查表
+  - **修正过时信息**：`internal/model/point.go` → `model.go`；技术栈拆成「已实现」/「规划中（Phase 2、3）」两张表（原文 MySQL/gRPC 混在一起易误读为已有）
+  - 保留教学价值章节：架构设计七原则（DIP/SRP/防御性/Fail Open/可观测性/契约先行/前后端分离）+ 五个设计模式
+- **修两个小坑**：
+  - `.gitignore` 加 `/awesomeProject`（39MB 编译产物，之前 `git status` 里是 `??`，会被误提交）
+  - `web/index.html` 删 `#modeGroup` 那 4 行死 CSS（全局统一方式按钮早已删除，样式残留）
+- **新增 `scripts/smoke.sh` 真 key 冒烟测试** ⭐（教学点：单测用 httptest 抓不到真实 API 行为，外部集成必须真 key 冒烟一次）：
+  - 8 组检查：服务/Redis 存活、清缓存、首次 `/plan` 真实路网、缓存写入+TLL、二次请求提速、`/search`、`/route` 轨迹点数、混合出行 walking/transit、参数校验 400
+  - **判定降级的巧招**：3 固定点驾车真实路网 ≈ 45 km vs haversine ≈ 29 km，用区间断言 40~50 就能识破"接口 200 但其实降级了"
+  - 无 key 模式下自测：6 通过 6 失败，失败项全部精确指向"未配置 AMAP_KEY"（证明断言有效）
+- **接口实测（无 key 模式）**：`/healthz` 200、`/` 200（8887 字节，改动生效）、`/app.js` 200、`/vendor/sortable.min.js` 200、`POST /plan` 200 → 29.09 km（haversine）、`/search` 与 `/route` 503（符合设计）
+- **环境重大更新** ⭐：
+  - **Docker daemon 现在完全正常**（记忆里那条 Keychain -67674 坑未复现），`docker ps` 正常
+  - **MySQL 8.4 镜像本机已有**，已起容器 `routeplanner-mysql`（3306，库 `routeplanner` 已建，版本 **8.4.11**）
+  - ⚠️ 镜像为 `linux/amd64`、宿主 arm64 → 走 Rosetta 模拟，**能用但慢**
+  - Redis 7.2.5 已在 6379 运行
+- **Phase 2 概念已讲**（异步化动机 + Redis Stream + 表设计 + 状态机）：
+  - **痛点算账**：步行/公交逐对 + 350ms 节流 → 3 点 2.1s、5 点 7s、**10 点 31.5s**；同步 HTTP 让浏览器转圈半分钟且易被网关掐断
+  - Stream 相比 List 的三个关键能力：**消费组**（XREADGROUP 竞争消费，一条只给一个 worker）、**ACK+PEL**（worker 崩了任务不丢）、**XAUTOCLAIM**（接管超时未 ack 的任务）
+  - `tasks` 表已设计好（id/status/req_json/result_json/error/created_at/updated_at + idx_status_created），状态机 pending→running→done/failed
+  - 包规划：`internal/storage`（Repository 接口 + MySQL 实现）、`internal/queue`（Stream 生产消费）、`internal/worker`（消费逻辑）；`api` 只改两处（`POST /plan` 变投递 + 新增 `GET /plan/{task_id}`）
+- **踩坑记录（写脚本时）**：① macOS 的 BSD `xargs` **不支持** GNU 的 `-r`；② `set -u` 下变量紧跟中文必须写 `${var}`，否则 bash 把中文当变量名一部分 → `unbound variable`（如 `$keys（` 要写 `${keys}（`）
+
+### 2026-08-27（DSH 会话）— 安装技能 + 代码质量优化 ✅
+
+- **新增技能/插件**：
+  - **superpowers-dsh** ([GitHub](https://github.com/LayneChai/superpowers-dsh))：TDD、调试、规划和协作技能
+  - **dsh-ponytail** ([GitHub](https://github.com/MengYuil/dsh-ponytail))：懒人资深开发模式，支持 `/ponytail-review/audit/debt/gain/help` 命令
+  - **grimoire** ([ClaudSkills](https://claudskills.com/skills/grimoire/))：技能管理器（用户说的 "grim me"）
+  - **安装方式**：`dsh plugin --profile web add <package>`（安装到 web profile）
+  - **推荐工具**：[dsh-skill-station](https://github.com/WilShi/dsh-skill-station) - 技能站，可一键扫描导入各种技能
+- **代码质量优化（后台分析报告）**：
+  - ✅ **并发安全**：通过（Memory 缓存正确使用 sync.Mutex）
+  - ✅ **资源泄漏**：通过（所有 HTTP 响应体都 defer 关闭）
+  - ⚠️ **错误处理**：2 个中优先级问题（已修复）
+  - ✅ **Panic 风险**：通过（所有数组访问有边界检查）
+  - ℹ️ **代码重复**：3 处可优化（已修复 2 处）
+- **Redis 错误处理优化**（`internal/cache/redis.go`）：
+  - `Redis.Get`：区分 `redis.Nil`（正常未命中）和连接错误（记录日志）
+  - `Redis.Set`：记录写入失败的错误日志（`log.Printf("[redis] set key=%s failed: %v")`）
+  - **教学点**：缓存系统要容忍故障（fail open），但需要记录日志便于排查；日志格式统一：`[模块名] 操作 key=%s failed: %v`
+- **抽取坐标解析函数**（`internal/amap/amap.go`）：
+  - 新增 `parseCoord(s string) (lng, lat float64, err error)` 统一处理 "lng,lat" 字符串解析
+  - `SearchPlaces` 使用新函数，消除重复代码（15 行 → 3 行）
+  - **教学点**：重复代码超过 3 次就该抽取；函数返回多个值（Go 特色）；错误信息要具体
+- **参数校验增强**（`internal/api/router.go`）：
+  - 定义常量 `MaxPoints = 50`（最大点数限制，避免性能问题）
+  - 添加 `isValidCoord(lat, lng float64) bool` 校验坐标范围（lat: -90~90, lng: -180~180）
+  - 添加 `isValidMode(mode string) bool` 校验出行方式
+  - `plan` 函数开头添加完整校验：点数超限、坐标有效性、segments 数组长度和内容合法性
+  - **教学点**：HTTP 接口层要做参数校验（防御性编程）；常量定义在文件顶部便于修改；返回具体错误信息方便前端显示
+- **部分失败容错 + 用户可见的降级提示** ⭐：
+  - **后端响应结构扩展**：`planResp` 新增 `Warnings []string`、`Degraded []string`、`IsDegraded bool` 字段
+  - **混合出行降级**：某段失败时，降级到 haversine 直线距离，记录日志和警告信息，继续计算其他段
+  - **前端显示警告**：`plan()` 函数检测 `is_degraded` 标志，渲染黄色警告框（`.warning-box`）显示具体降级路段
+  - **教学点**：部分失败容错比"要么全对要么全错"更友好；降级必须透明（用户需知道哪些是真的，哪些是降级的）；日志 vs 用户提示（详细错误信息记录日志，简明提示返回用户）
+- **版本号**：前端 bump 到 `v=20260827a`；go vet/build/test 全过
 
 ### 2026-08-20（DSH 会话）— 修 Sortable 索引 bug + 本地化拖拽库 ✅
 
@@ -142,10 +413,44 @@
 
 ## 下次会话从这里继续
 
-1. **状态**：Phase 1 MVP 功能全部完成——搜索（后端代理+全国可选城市）、多出行方式（驾车/步行/公交）、混合出行（每段独立方式）、拖拽排序（SortableJS 本地化+索引 bug 已修）、彩色分段路线+图例、Redis 缓存。用户最后确认拖拽正常（`v=20260820i`）
-2. **晚上可选项**：① 用户浏览器再实测一轮，收尾 Phase 1；② **Phase 2（Redis Stream 异步 + MySQL 持久化）**——Redis 环境已就绪（`.redis-src/redis-7.2.5/src/redis-server`）；③ 已知小项：模拟退火固定随机种子
-3. 启动命令：`AMAP_KEY=<Web服务key>` + `.redis-src/redis-7.2.5/src/redis-server --port 6379 --save '' --appendonly no &` + `/tmp/routeplanner`（需先 `go build`，带 GOPATH/GOCACHE/GOMODCACHE env）
-4. 备忘：Go 命令带 `GOPATH/GOCACHE/GOMODCACHE` 三个 env（指工作区）；前端改动后 bump `app.js?v=` 版本号
+1. **状态（2026-09-14）**：Phase 1 功能全部完成；**前端已重构为 React 并成为唯一前端**（挂站点根路径），
+   手写版已删；本轮做了 14 项浏览器实测（见进度追踪）。**只差最后一步收尾：带 AMAP_KEY 的真实路网 + Redis 缓存实测** ⏳
+   - 🔑 **`.env` 已建好并写入用户那把 key**（2026-09-14 找到：存在**他日常用的 Edge** 的
+     localStorage 里，键名 `amap_key`，值 `2d47bee5c94656cd615a644a271b2c61`）
+   - ⚠️ **但后端暂时还用不了**：该 key 只绑定了「Web端(JS API)」平台，
+     实测打 REST 接口返回 `USERKEY_PLAT_NOMATCH`(10009) —— key 本身有效，是平台不对
+     （对照：编造的 key 返回 `INVALID_USER_KEY` 10001）
+   - **待办（等用户去控制台点两下）**：① 在 console.amap.com 给这个 key **追加勾选「Web服务」平台**
+     （不用重新申请，key 值不变 → `.env` 无需改）；② 顺手复制「安全密钥」备用
+     （只有将来要做"前端直连搜索"才需要，地图渲染不需要它）。
+     **用户做完回来说一声** → 停旧实例 → `set -a; source .env; set +a; ./awesomeProject &` → `bash scripts/smoke.sh`
+   - ⚠️ 用户已明确选择路线：**保持后端代理架构**（不走前端直连搜索），所以本轮只订正了文案，没动搜索实现
+   - 期望结果：**12/12 通过**，首次 `/plan` total_km ≈ 45（真实路网），二次请求 0 个 `[amap]` 日志
+   - 配了 key 之后**才能测的前端部分**（本轮无 key，这 6 项没覆盖）：地图渲染 / 地图点选 /
+     搜索候选列表 / 真实路网 polyline / 降级警告 / 图例与缩放
+2. **Phase 2 已启动**（环境全部就绪，概念已讲）：Redis 7.2.5（6379）+ MySQL **8.4.11** 容器 `routeplanner-mysql`（3306，库 `routeplanner` 已建）
+   - **下一步第一步**：建 `tasks` 表 + `internal/storage` 包（Repository 接口 + MySQL 实现）——教学点：`database/sql`、连接池参数、DSN、MySQL 8 的 `caching_sha2_password`
+   - 后续顺序：`internal/queue`（XADD / XREADGROUP / XACK / XAUTOCLAIM）→ `internal/worker` 消费逻辑 → `api` 改造（`POST /plan` 变投递返回 202 + task_id，新增 `GET /plan/{task_id}` 查询）→ 前端轮询显示进度
+3. **可选项**：① 前端搜索框防抖（低优先级）；② 模拟退火固定随机种子；
+   ③ **给 `frontend/` 加测试** —— 目前前端零测试，`go test` 管不到它。可上 Vitest，
+      优先覆盖 `usePoints.movePoint`（重排 + legMode 重置）和 `api.js` 的错误归一化；
+   ④ 深浅色主题（`styles/tokens.css` 已经把设计变量抽出来了，具备换主题的条件）
+4. 启动命令（**已修正**）：
+   - Redis：`.redis-src/redis-7.2.5/src/redis-server --port 6379 --save '' --appendonly no &`
+   - MySQL：`docker start routeplanner-mysql`（首次创建：`docker run -d --name routeplanner-mysql -e MYSQL_ROOT_PASSWORD=root123 -e MYSQL_DATABASE=routeplanner -p 3306:3306 mysql:8.4`）
+   - 后端：`go build -o awesomeProject .` 后 `set -a; source .env; set +a; ./awesomeProject` —— **二进制名是 `awesomeProject`，不是 `routeplanner`**（README 用 `go run .` 也可以）
+5. 备忘：
+   - Go 命令要带 `GOPATH/GOCACHE/GOMODCACHE` 三个 env（指向工作区）
+   - **前端改动流程**：`cd frontend && npm run build`（产物落到 `../web/`）。
+     **不再需要手动 bump `app.js?v=`** —— Vite 产物文件名自带内容 hash（如 `index-CFMrierg.js`），
+     代码一改 hash 就变，浏览器缓存自然失效。手动 bump 是旧手写版才需要的
+   - **Redis 没有丢**：二进制在 `.redis-src/redis-7.2.5/src/redis-server`（源码编译版，
+     `.redis-src/` 已被 gitignore），只是当前没在跑。要用就先启动它
+     （⚠️ 无 key 时 Redis 根本不会被装配，见 `main.go`）
+   - shell 脚本坑：`${var}` 必须加花括号（紧跟中文会被 bash 当变量名的一部分）；
+     macOS BSD `xargs` **无 `-r`**；BSD `grep` **不支持 `\|`**（要用 `grep -E`）；
+     BSD `sed -i` 需要跟一个后缀参数
+   - DSH 已安装 superpowers/ponytail/grimoire 技能；MySQL 镜像是 linux/amd64 → arm64 宿主走 Rosetta 模拟（慢但可用）
 
 ---
 
