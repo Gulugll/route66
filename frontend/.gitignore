@@ -1,0 +1,6 @@
+# 依赖（不要进仓库，clone 后跑 npm install 就有）
+node_modules/
+
+# 产物**不在这个目录** —— Vite 的 outDir 指向 ../web（见 vite.config.js），
+# 由仓库根 .gitignore 里那条 `/web/` 负责忽略。
+# 想让它出现：npm run build（产物直接落到 ../web/，由 Go 托管在站点根路径）。
