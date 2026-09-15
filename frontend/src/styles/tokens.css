@@ -1,0 +1,74 @@
+/* ============================================================================
+   tokens.css —— 设计变量（Design Tokens）
+
+   为什么要有这个文件：
+   手写版里同一个主色写了三份（CSS 里一份、app.js 的 modeColor() 一份、
+   图例里又一份），改一处忘一处就不一致。根因不是"没框架"，是"没有单一来源"。
+
+   这里用 CSS 自定义属性（CSS 变量）建立单一来源。注意一个事实：
+   CSS 变量只在 CSS 里能用，JS 里读不到。而地图折线的颜色必须在 JS 里设置
+   （AMap.Polyline({strokeColor})）。所以颜色其实有两份消费方：
+     - CSS 侧：界面样式   → 读这个文件的变量
+     - JS  侧：地图折线   → 读 ../theme.js
+   两个文件里的值必须一致 —— 这是本设计系统唯一的"人工同步点"，
+   我在 theme.js 里做了说明和防错处理。
+   ========================================================================== */
+
+:root {
+  /* —— 中性色：底色 / 面 / 描边 —— */
+  --bg-page:      #F5F5F7;  /* 页面底 */
+  --bg-surface:   #FFFFFF;  /* 卡片、面板 */
+  --bg-subtle:    #FAFAFC;  /* 输入框、次级块 */
+  --bg-sunken:    #F0F0F2;  /* 徽标、候选高亮 */
+  --border:       #E0E0E0;
+  --border-soft:  #EFEFF1;
+
+  /* —— 文字三级 —— */
+  --ink:            #1D1D1F;  /* 主文字，同时也是唯一的"交互色" */
+  --text-secondary: #7A7A7A;
+  --text-tertiary:  #A1A1A6;
+
+  /* —— 语义色：只表示"出行方式"，不参与界面装饰 ——
+     这是刻意的约束。手写版把按钮主色和"驾车"都用 #1a73e8，
+     用户会误以为按钮和驾车有关系。这里把蓝色让给"驾车"语义，
+     界面里的按钮统一走 --ink（墨色）。 */
+  --driving: #0066CC;
+  --walking: #34A853;
+  --transit: #E08600;
+
+  /* 语义色的浅底（徽标、选中态） */
+  --driving-soft: #E8F1FB;
+
+  /* —— 状态色 —— */
+  --danger:         #D93025;
+  --danger-soft:    #FDECEA;
+  --success:        #34A853;
+  --success-text:   #1E7A38;
+  --warning-soft:   #FFF8E6;
+  --warning-border: #F2D18A;
+  --warning-text:   #8A5A00;
+
+  /* —— 圆角：输入 9 / 卡片 10~14 / 胶囊按钮取半高 —— */
+  --radius-input: 9px;
+  --radius-card:  12px;
+  --radius-chip:  10px;
+
+  /* —— 间距 —— */
+  --gap-xs: 6px;
+  --gap-sm: 8px;
+  --gap-md: 12px;
+  --gap-lg: 20px;
+  --panel-width: 352px;
+  --topbar-height: 56px;
+
+  /* —— 字体 ——
+     不引入 webfont：system-ui 在 macOS 上就是 SF Pro + PingFang SC，
+     中文和数字都好看，还省掉一次网络请求。 */
+  --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC',
+             'Noto Sans SC', system-ui, sans-serif;
+  /* 数字（坐标、距离）单独一套：Inter 的等宽数字让数字不跳动 */
+  --font-num: 'Inter', 'SF Mono', ui-monospace, monospace;
+
+  /* —— 阴影（克制使用，只有一个） —— */
+  --shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.10);
+}

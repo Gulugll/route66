@@ -1,0 +1,964 @@
+/* ============================================================================
+   app.css —— 布局与组件样式
+   按"从上到下、从外到内"的顺序组织，和组件结构一一对应，方便对照阅读。
+   颜色一律走 tokens.css 的变量，这里不出现任何硬编码色值（唯一的例外是
+   半透明白，用于地图上的浮层，那种地方写 rgba 更直观）。
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--bg-page);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+input {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* ---------------------------------------------------------------------------
+   骨架：顶栏 / 主体（左面板 + 地图）
+   --------------------------------------------------------------------------- */
+.app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.topbar {
+  flex: 0 0 var(--topbar-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  background: var(--bg-surface);
+}
+
+.hairline {
+  flex: 0 0 1px;
+  background: var(--border);
+}
+
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0; /* 关键：不加这句，内部的 overflow-y:auto 不会生效 */
+}
+
+/* ---------------------------------------------------------------------------
+   顶栏
+   --------------------------------------------------------------------------- */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-title {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* 次级按钮：墨色描边 + 墨色文字。
+   刻意不用蓝色 —— 蓝色已经专门留给"驾车"这个语义（见 theme.js 的说明）。 */
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 17px;
+  background: var(--bg-surface);
+  transition: background 0.15s ease;
+}
+
+.btn-ghost:hover {
+  background: var(--bg-subtle);
+}
+
+/* ---------------------------------------------------------------------------
+   左侧控制面板
+   --------------------------------------------------------------------------- */
+.panel {
+  flex: 0 0 var(--panel-width);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-lg);
+  padding: 20px;
+  background: var(--bg-surface);
+  overflow-y: auto;
+}
+
+.divider-v {
+  flex: 0 0 1px;
+  background: var(--border);
+}
+
+.module {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.module-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.module-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.module-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+/* ---------------------------------------------------------------------------
+   输入框与字段
+   --------------------------------------------------------------------------- */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-xs);
+}
+
+.field-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.input-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: 0 12px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-input);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.input-wrap:focus-within {
+  border-color: var(--ink);
+  background: var(--bg-surface);
+}
+
+.input-wrap.is-error {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+}
+
+.input::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* 尺寸档：搜索行 38 / 普通 34 */
+.input-wrap--lg {
+  height: 38px;
+}
+
+.input-wrap--md {
+  height: 34px;
+}
+
+.input-suffix {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.error-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gap-xs);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--danger);
+}
+
+/* ---------------------------------------------------------------------------
+   按钮
+   --------------------------------------------------------------------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gap-sm);
+  height: 34px;
+  padding: 0 16px;
+  border-radius: 17px;
+  white-space: nowrap;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+/* 主按钮 = 墨色。整个界面里"可点的东西"统一这个色，不参与语义色。 */
+.btn--primary {
+  background: var(--ink);
+  color: var(--bg-surface);
+  font-weight: 500;
+}
+
+.btn--primary:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.btn--primary:disabled {
+  background: var(--bg-sunken);
+  color: var(--text-tertiary);
+  cursor: not-allowed;
+}
+
+/* 次级按钮（弹层里的"取消"）：描边 + 白底 */
+.btn--ghost {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+}
+
+.btn--ghost:hover {
+  background: var(--bg-subtle);
+}
+
+/* 主行动按钮：占满宽度、更高 */
+.btn--block {
+  width: 100%;
+  height: 46px;
+  border-radius: 23px;
+  font-size: 14px;
+}
+
+/* ---------------------------------------------------------------------------
+   搜索候选
+   --------------------------------------------------------------------------- */
+.candidates {
+  list-style: none;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+  overflow: hidden;
+}
+
+.candidate {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.candidate + .candidate {
+  border-top: 1px solid var(--border-soft);
+}
+
+.candidate:hover,
+.candidate.is-active {
+  background: var(--bg-sunken);
+}
+
+.candidate-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.candidate-name {
+  font-size: 13px;
+}
+
+.candidate-addr {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   地点列表
+   --------------------------------------------------------------------------- */
+.point-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.point-li {
+  display: flex;
+  flex-direction: column;
+}
+
+.point-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 12px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+  cursor: grab;
+}
+
+.point-card.is-dragging {
+  opacity: 0.45;
+  border-style: dashed;
+}
+
+/* 拖到谁头上谁高亮 —— 让用户知道"会插到这个位置" */
+.point-card.is-drop-target {
+  border-color: var(--ink);
+}
+
+.badge {
+  flex: 0 0 auto;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+}
+
+/* 起点徽标用实心墨色：它和第 1/2 站是"层次不同"的两类东西，
+   不是"颜色不同"的两类东西。这样也彻底避开了蓝色（蓝色=驾车）。 */
+.badge--origin {
+  background: var(--ink);
+  color: var(--bg-surface);
+}
+
+.point-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.point-coords {
+  flex: 0 0 auto;
+  font-family: var(--font-num);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 图标按钮：只有图标没有文字，所以必须有 aria-label（见 PointList.jsx）。
+   视觉上它就是一个小小的方形热区。 */
+.icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  transition: background 0.15s ease;
+}
+
+.icon-btn:hover {
+  background: var(--bg-sunken);
+}
+
+/* 段连接线：两点之间的出行方式选择。视觉上就是那根连接线。 */
+.leg-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  height: 24px;
+  padding: 0 2px;
+}
+
+.leg-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.leg-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.mode-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.mode-btn:hover {
+  border-color: var(--text-tertiary);
+}
+
+/* 选中态的颜色 = 该出行方式的语义色。色值来自 token，不在这里硬编码，
+   也只在这个地方按 data-mode 分派 —— 加一种出行方式只要加一条规则。 */
+.mode-btn.is-active {
+  color: var(--bg-surface);
+}
+
+.mode-btn[data-mode='driving'].is-active {
+  background: var(--driving);
+  border-color: var(--driving);
+}
+
+.mode-btn[data-mode='walking'].is-active {
+  background: var(--walking);
+  border-color: var(--walking);
+}
+
+.mode-btn[data-mode='transit'].is-active {
+  background: var(--transit);
+  border-color: var(--transit);
+}
+
+/* ---------------------------------------------------------------------------
+   规划选项 / 手动坐标（折叠）
+   --------------------------------------------------------------------------- */
+.options-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+  padding: 12px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+/* 自绘复选框的视觉部分 */
+.checkbox {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--text-tertiary);
+  border-radius: 4px;
+  background: var(--bg-surface);
+  color: var(--bg-surface);
+}
+
+.checkbox.is-checked {
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+/* 真 input 藏起来但保留在 DOM 里 —— 键盘和读屏仍然可用（无障碍）。
+   这是"自绘控件"的标准做法：不要用 div 假装 input。 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.option-hint {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-secondary);
+}
+
+/* 模式选择（两个互斥 radio 卡片）。
+   控件语义决定控件类型：二选一用 radio，不用"反向 checkbox"。
+   选中态只动两处——卡片描边变墨色、圆点实心——克制地高亮，
+   不加背景色，和"墨色 = 唯一交互色"的约定一致。 */
+.mode-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+  cursor: pointer;
+}
+
+.mode-option.is-checked {
+  border-color: var(--ink);
+}
+
+.mode-radio {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border: 1px solid var(--text-tertiary);
+  border-radius: 50%;
+  background: var(--bg-surface);
+}
+
+.mode-option.is-checked .mode-radio {
+  border-color: var(--ink);
+}
+
+.mode-option.is-checked .mode-radio::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+.mode-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.mode-desc {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-secondary);
+}
+
+.checkbox-row.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.details {
+  font-size: 12px;
+}
+
+.details > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xs);
+  padding-left: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  list-style: none;
+}
+
+.details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.details[open] > summary {
+  margin-bottom: 10px;
+}
+
+.chevron {
+  transition: transform 0.15s ease;
+}
+
+.details[open] .chevron {
+  transform: rotate(90deg);
+}
+
+.details-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+  padding: 12px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+}
+
+/* ---------------------------------------------------------------------------
+   规划中的进度
+   --------------------------------------------------------------------------- */
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+}
+
+.progress-item {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.progress-item svg {
+  flex: 0 0 auto;
+}
+
+.progress-item--done {
+  color: var(--ink);
+}
+
+.progress-item--active {
+  color: var(--driving);
+  font-weight: 500;
+}
+
+.progress-item--pending {
+  color: var(--text-tertiary);
+}
+
+/* ---------------------------------------------------------------------------
+   规划结果
+   --------------------------------------------------------------------------- */
+.result-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+  padding: 14px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.result-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chip {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+}
+
+.result-block {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.result-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.result-value {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.total-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gap-xs);
+}
+
+.total-value {
+  font-family: var(--font-num);
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 34px;
+  font-variant-numeric: tabular-nums;
+}
+
+.total-unit {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.warning-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gap-sm);
+  padding: 10px;
+  background: var(--warning-soft);
+  border: 1px solid var(--warning-border);
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--warning-text);
+}
+
+.warning-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* 行动就在旁边的错误（比如"这次规划为什么失败"）。
+   和 .warning-bar 是同一套结构，只是红色 ——
+   错误和警告在视觉上必须能一眼分开。 */
+.error-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gap-sm);
+  padding: 10px;
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--danger);
+}
+
+/* ---------------------------------------------------------------------------
+   地图区
+   --------------------------------------------------------------------------- */
+.map-area {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+  background: #EEF1F4;
+  overflow: hidden;
+}
+
+.map-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+/* 空态：没配 key 时不是"一行干巴巴的字"，而是有图标、有解释、有出口 */
+.map-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+}
+
+.map-empty-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.map-empty-desc {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 16px;
+}
+
+/* 地图上的浮层：图例 / 缩放 / 版权 */
+.floating {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  z-index: 10;
+}
+
+.legend {
+  top: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+  padding: 12px;
+  min-width: 100px;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  font-size: 12px;
+}
+
+.legend-bar {
+  width: 22px;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.zoom-control {
+  right: 20px;
+  bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.zoom-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+}
+
+.zoom-btn:hover {
+  background: var(--bg-subtle);
+}
+
+.zoom-btn + .zoom-btn {
+  border-top: 1px solid var(--border-soft);
+}
+
+.attribution {
+  position: absolute;
+  left: 20px;
+  bottom: 16px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  z-index: 10;
+}
+
+/* ---------------------------------------------------------------------------
+   设置弹层
+   --------------------------------------------------------------------------- */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.dialog {
+  width: 400px;
+  max-width: calc(100vw - 40px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px;
+  background: var(--bg-surface);
+  border-radius: 14px;
+  box-shadow: var(--shadow-pop);
+}
+
+.dialog-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.dialog-hint {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-secondary);
+}
+
+.dialog-actions {
+  display: flex;
+  gap: var(--gap-sm);
+  margin-top: 4px;
+}
+
+.dialog-actions .btn {
+  flex: 1;
+}
+
+/* ---------------------------------------------------------------------------
+   全局提示条（替代 alert）
+   --------------------------------------------------------------------------- */
+/* 手写版所有错误都用浏览器 alert() 弹：不可控、打断流程、也不像产品的一部分。
+   这里改成顶部内联提示条 —— 出现时不打断用户，还能保留上下文。 */
+.toast-stack {
+  position: fixed;
+  top: 68px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+  width: min(560px, calc(100vw - 40px));
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-chip);
+  box-shadow: var(--shadow-pop);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--danger);
+}
+
+.toast--info {
+  background: var(--warning-soft);
+  border-color: var(--warning-border);
+  color: var(--warning-text);
+}
+
+.toast-close {
+  flex: 0 0 auto;
+  color: inherit;
+  opacity: 0.6;
+}
+
+.toast-close:hover {
+  opacity: 1;
+}
+
+/* 尊重"减少动态效果"的系统偏好 —— 无障碍的基本要求 */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

@@ -3,6 +3,10 @@
 *.exe
 *.test
 
+# Go build output at repo root: `go build` 默认把二进制命名为 module 名(awesomeProject),
+# 39MB 的产物不该进仓库 —— README 让使用者用 `go run .`,不需要它。
+/awesomeProject
+
 # GoLand
 .idea/
 
@@ -22,3 +26,15 @@
 .redis-src/
 .DS_Store
 .npmcache/
+
+# 前端构建产物 + 依赖，都不进仓库。
+#
+# web/ 整个目录都是 Vite 的产物（outDir 指向 ../web），能由 frontend/ 的源码重新生成 ——
+# clone 后跑 `cd frontend && npm install && npm run build` 即可。
+# 注意 web/ 曾经放过手写版的源码（index.html + app.js + vendor/），那部分已删除，
+# 现在这个目录纯粹是产物，所以整目录忽略是对的。
+/web/
+/frontend/node_modules/
+
+# AI 会话的本地记忆 / 工作日志（跨会话的项目记忆在 AGENTS.md，那份进仓库）
+.workbuddy/
