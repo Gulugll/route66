@@ -57,8 +57,34 @@ func (c *Memory) Get(key string) (float64, bool) {
 	return e.km, true
 }
 
+// sweepThreshold:map 条目超过这个数时,写入前先清一次过期 key。
+//
+// 为什么需要它:Get 里的"过期即删"只有"有人再来读这个 key"时才触发。
+// 一个写进去就再没被读过的 key(比如用户只规划过一次就换了路线)会一直躺着,
+// map 就成了只增不减的黑洞。TTL 只是"逻辑上过期",不等于"物理上删掉"。
+//
+// 为什么不用定时器:定时器要管生命周期(goroutine + ticker,还得能被停掉),
+// 而这个缓存本来就有"写入"这个天然时机可以顺手维护,不必额外引入并发的复杂度。
+const sweepThreshold = 1024
+
 func (c *Memory) Set(key string, km float64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if len(c.m) >= sweepThreshold {
+		c.sweepLocked()
+	}
 	c.m[key] = memEntry{km: km, expires: time.Now().Add(c.ttl)}
+}
+
+// sweepLocked 删掉所有已过期条目。方法名带 Locked 后缀是 Go 的命名惯例,
+// 意思是"调用前必须已持有 c.mu"——锁的约束用名字写出来,比写在注释里可靠。
+//
+// 边遍历边 delete 是 Go 明确允许的(不像有些语言会崩),所以不用先收集 key 再删。
+func (c *Memory) sweepLocked() {
+	now := time.Now()
+	for k, e := range c.m {
+		if now.After(e.expires) {
+			delete(c.m, k)
+		}
+	}
 }

@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -41,9 +42,14 @@ const keyPrefix = "dist:"
 
 func (r *Redis) Get(key string) (float64, bool) {
 	v, err := r.client.Get(context.Background(), keyPrefix+key).Float64()
+	if err == redis.Nil {
+		// key 不存在是正常情况,不算错误
+		return 0, false
+	}
 	if err != nil {
-		// 没命中 / Redis 暂时不可用,都算"没有"。
-		// 缓存系统必须容忍后端故障:宁可多打一次高德,也不能因此报错。
+		// Redis 连接失败等其他错误:记录日志,方便排查
+		// 但仍然返回 false,让上层降级到高德 API (缓存故障不影响主流程)
+		log.Printf("[redis] get key=%s failed: %v", key, err)
 		return 0, false
 	}
 	return v, true
@@ -53,5 +59,9 @@ func (r *Redis) Set(key string, km float64) {
 	// Set 带 TTL:go-redis 的第三个参数就是过期时间,到期自动删除,
 	// 对应内存版的 expires 逻辑——TTL 由 Redis 自己管,不用我们清。
 	ctx := context.Background()
-	r.client.Set(ctx, keyPrefix+key, km, r.ttl)
+	if err := r.client.Set(ctx, keyPrefix+key, km, r.ttl).Err(); err != nil {
+		// 缓存写入失败不影响主流程(符合"缓存是优化"的设计),
+		// 但记录日志方便运维发现问题(比如 Redis 磁盘满/连接断开)。
+		log.Printf("[redis] set key=%s failed: %v", key, err)
+	}
 }

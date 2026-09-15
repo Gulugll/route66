@@ -3,9 +3,11 @@
 //  2. "某个关键词有哪些地点候选"(搜索)
 //
 // 出行方式对应不同的高德接口(实测确认):
-//   driving → v3/distance(type=1 驾车,支持批量,逐列请求)
-//   walking → v5/direction/walking(单对,逐对请求)
-//   transit → v3/direction/transit/integrated(单对,逐对请求)
+//
+//	driving → v3/distance(type=1 驾车,支持批量,逐列请求)
+//	walking → v5/direction/walking(单对,逐对请求)
+//	transit → v3/direction/transit/integrated(单对,逐对请求)
+//
 // 骑行(cycling)对个人开发者 key 返回 RESOURCE_UNAVAILABLE,暂不支持。
 //
 // 距离矩阵怎么算(driving):实测高德 v3/distance 的批量语义是
@@ -23,34 +25,67 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"awesomeProject/internal/cache"
 	"awesomeProject/internal/model"
 )
 
-// baseURL 高德 v3/distance 接口地址。
-// 用 var 而不是 const,是为了测试里能替换成本地模拟服务器(httptest)。
-var baseURL = "https://restapi.amap.com/v3/distance"
+// 高德 Web 服务的根地址 + 本项目用到的各个接口路径。
+//
+// 以前这里是一个包级变量 baseURL,只有 v3/distance 能替换。两个问题:
+//  1. 包级可变状态 = 全局状态,测试之间会互相干扰(谁改了没改回来就炸),
+//     而且一旦有人加 t.Parallel() 就直接 race
+//  2. 只能 fake 一个接口,想测"步行失败怎么办"就 fake 不了
+//
+// 改成"根地址做成 Client 的字段 + 路径常量化":每个实例各自持有一份,
+// 测试里想指哪儿指哪儿,互不影响;顺带一眼看清这个项目到底用了高德哪几个接口。
+const defaultRESTBase = "https://restapi.amap.com"
+
+const (
+	pathDistance   = "/v3/distance"                     // 驾车距离,支持批量(多起点→单终点)
+	pathDrivingDir = "/v3/direction/driving"            // 驾车明细,带轨迹 polyline
+	pathWalkingV5  = "/v5/direction/walking"            // 步行距离,数值准但不返回轨迹
+	pathWalkingV3  = "/v3/direction/walking"            // 步行路线,有轨迹(所以画线用它)
+	pathTransitDir = "/v3/direction/transit/integrated" // 公交换乘方案
+	pathPlaceText  = "/v3/place/text"                   // 关键词搜地点
+)
 
 // Client 高德 Web 服务客户端。
 // cache 字段可空:传 nil 表示不缓存(比如测试或想关掉缓存时)。
 type Client struct {
-	key   string
-	http  *http.Client
-	cache cache.Cache
+	key      string
+	restBase string // 高德 REST 根地址。测试里换成 httptest 假服务器
+	http     *http.Client
+	cache    cache.Cache
 }
 
 // NewClient 创建一个高德客户端。key 是 Web 服务 key(不是 JS key)。
 // c 可为 nil。超时 5 秒:外部 API 必须设超时,否则一个慢请求能把
 // 整个 /plan 卡死——这是"外部依赖要有边界"的基本功。
 func NewClient(key string, c cache.Cache) *Client {
+	return NewClientWithBase(key, defaultRESTBase, c)
+}
+
+// NewClientWithBase 和 NewClient 一样,但可以指定高德 REST 根地址。
+//
+// 为什么单独开一个构造器,而不是把 restBase 字段导出让外面直接赋值:
+// 字段能被随意改,就没人知道"什么时候、在哪里被改过";
+// 而一个构造器把"我要连哪儿"这件事显式写进调用点,读代码的人一眼看得见。
+// 它的使用者只有一个——上层的集成测试(把请求指向本地假服务器);
+// 生产代码永远走 NewClient,根地址固定是官方域名。
+func NewClientWithBase(key, restBase string, c cache.Cache) *Client {
 	return &Client{
-		key:   key,
-		http:  &http.Client{Timeout: 5 * time.Second},
-		cache: c,
+		key:      key,
+		restBase: restBase,
+		http:     &http.Client{Timeout: 5 * time.Second},
+		cache:    c,
 	}
 }
+
+// url 拼出某个接口的完整地址。所有请求都走它,换地址只改一处。
+func (c *Client) url(path string) string { return c.restBase + path }
 
 // DistanceMatrix 返回 n×n 距离矩阵(公里),dists[i][j] = 点 i 到 j(按 mode 出行)。
 // 任何一步失败都返回 error——具体怎么降级由上层决定(matrix 会退回 haversine)。
@@ -65,7 +100,39 @@ func (c *Client) DistanceMatrix(points []model.Point, mode model.Mode) ([][]floa
 	}
 }
 
-// drivingMatrix 驾车矩阵:逐列批量(v3/distance type=1)。
+// maxColumnConcurrent 驾车矩阵"同时在途"的列请求数上限(信号量容量)。
+//
+// 为什么是 4,而不是"越多越好":并发度的上限由 key 的 QPS 配额决定,不由核数决定。
+// 高德对超配额请求的回应是 CUQPS_HAS_EXCEEDED_THE_LIMIT——开 50 个 goroutine
+// 只会同时收获 50 个报错,还把配额烧得更快。
+// 4 路并发 × 单请求约 300ms ≈ 峰值 13 QPS,对常见个人认证配额是安全的;
+// 如果你的 key 在控制台「流量分析-配额管理」里的 QPS 更低,把它调小即可。
+const maxColumnConcurrent = 4
+
+// drivingMatrix 驾车矩阵:逐列批量(v3/distance type=1),列与列并发请求。
+//
+// ── 为什么这批工作适合并发 ──
+// n 列彼此独立:第 j 列要的是"所有点到点 j 的距离",和第 k 列毫无交集。
+// 每列 90% 的时间都在等网络回包——等的时候 CPU 闲着,完全可以去发下一列。
+// 这是并发(I/O 重叠)最理想的形状:等待互相填满,而不是靠多核硬算。
+//
+// ── 但"能并发"不等于"无脑 go 出去",三个问题必须逐个回答 ──
+//
+//  1. 最多同时发几个? → 信号量限流,见 maxColumnConcurrent 的注释。
+//
+//  2. 谁写矩阵?会不会打架? → 每个 goroutine 只写**自己那一列** dists[i][j]
+//     (j 固定,i 遍历)。不同 goroutine 碰的内存位置零交集,元素级并发写
+//     在 Go 里是安全的,连锁都不用加。
+//     两个前提,缺一不可:
+//       a) 矩阵在外面已经 make 好,goroutine 里只做下标赋值、绝不 append——
+//          append 可能触发扩容、整体搬迁底层数组,那才是真竞争;
+//       b) 缓存写入(c.store)走 cache.Cache,Memory 实现自带 sync.Mutex,
+//          不然并发写 map 会直接 fatal(不是能 recover 的 panic)。
+//
+//  3. 某一列失败了怎么办? → 矩阵不完整,必须整体报错,让上层 matrix
+//     降级到 haversine——绝不能返回"半张真实半张直线"的混搭矩阵。
+//     多列可能同时失败,用互斥锁只记**第一个**错误:错误信息要有"第一个赢家",
+//     后来的直接丢弃,否则报错内容互相覆盖,排查时看到的永远不确定是哪个。
 func (c *Client) drivingMatrix(points []model.Point) ([][]float64, error) {
 	n := len(points)
 	dists := make([][]float64, n)
@@ -73,8 +140,20 @@ func (c *Client) drivingMatrix(points []model.Point) ([][]float64, error) {
 		dists[i] = make([]float64, n)
 	}
 
+	// 信号量 = 带缓冲的 channel,容量就是"同时最多几路"。
+	// 发送成功 = 占到一个名额;接收 = 归还名额。
+	// 为什么用 channel 而不是"计数器 + 锁":channel 的阻塞语义天然形成
+	// "排队等名额"——池子满了发送方就停,不用自己写"满了怎么办"的判断。
+	// 这就是 Go 说的"不要通过共享内存来通信,要通过通信来共享内存"。
+	sem := make(chan struct{}, maxColumnConcurrent)
+
+	var wg sync.WaitGroup // 计数器:还差几个 goroutine 没收工
+	var errMu sync.Mutex  // 只保护 firstErr 这一个变量——锁的粒度越小越好
+	var firstErr error
+
 	for j := 0; j < n; j++ {
-		// 第 j 列:所有点 i≠j 到点 j 的距离。先查缓存,没命中的凑一批请求。
+		// 缓存查询留在主 goroutine 里做:命中的直接填进矩阵,
+		// 不进并发池、不发请求、不占信号量名额。
 		origins := make([]string, 0, n-1) // 多个起点
 		idxs := make([]int, 0, n-1)       // 记录每个结果该填到哪一行
 
@@ -90,19 +169,58 @@ func (c *Client) drivingMatrix(points []model.Point) ([][]float64, error) {
 			idxs = append(idxs, i)
 		}
 		if len(idxs) == 0 {
-			continue // 这列全命中缓存,不用发请求
+			continue // 这列全命中缓存,连 goroutine 都不用开
 		}
 
-		col, err := c.fetchColumn(origins, points[j])
-		if err != nil {
-			return nil, err
-		}
-		for k, i := range idxs {
-			dists[i][j] = col[k]
-			c.store(cacheKey(model.ModeDriving, points[i], points[j]), col[k]) // 写缓存,下次直接命中
-		}
+		// 先占名额,再开 goroutine:池子满了这里会阻塞——这正是要的
+		// "背压"效果:主 goroutine 停下来等,而不是让无限多的请求堆积。
+		// 注意占名额在主 goroutine、还名额在子 goroutine,一进一出刚好配对。
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(j int, origins []string, idxs []int) {
+			// 两个 defer 逆序执行:先还名额,再通知 WaitGroup——
+			// 顺序其实无所谓,但必须用 defer,保证 return / panic 都逃不掉,
+			// 否则一个 panic 就能让 wg.Wait() 永远等下去(goroutine 泄漏的常见来源)。
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			col, err := c.fetchColumn(origins, points[j])
+			if err != nil {
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = wrapColumnErr(j, err)
+				}
+				errMu.Unlock()
+				return // 这列废了,矩阵注定不完整,别再填数据
+			}
+			for k, i := range idxs {
+				dists[i][j] = col[k] // 只写第 j 列,见函数注释第 2 点
+				c.store(cacheKey(model.ModeDriving, points[i], points[j]), col[k]) // 写缓存,下次直接命中
+			}
+		}(j, origins, idxs)
+		// 为什么把 j/origins/idxs 显式传参而不是闭包直接捕获?
+		// Go 1.22 起循环变量每轮都是新实例,捕获也安全;但显式传参把
+		// "这个 goroutine 用的是这一轮的值"写在脸上,review 的人不需要
+		// 记住"哪个 Go 版本开始没这个坑"——并发代码里的隐式知识越少越好。
+	}
+
+	// 阻塞到所有列收工。此刻 dists 要么完整,要么 firstErr 非空。
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
 	}
 	return dists, nil
+}
+
+// wrapColumnErr 把某一列的失败包装成带上下文的错误。
+// 单独拆出来是为了给"限流"类错误加人话提示:CUQPS_HAS_EXCEEDED_THE_LIMIT
+// 是高德的"超过 QPS"报错,并发改造后**最可能**撞上的就是它——
+// 错误信息要能指导行动:告诉你调哪个常量,而不是只丢一个英文码。
+func wrapColumnErr(col int, err error) error {
+	if strings.Contains(err.Error(), "CUQPS") {
+		return fmt.Errorf("第 %d 列: %w(高德限流:并发超过了 key 的 QPS 配额,把 amap.go 的 maxColumnConcurrent 调小)", col, err)
+	}
+	return fmt.Errorf("第 %d 列: %w", col, err)
 }
 
 // pairwiseMatrix 逐对矩阵(walking/transit):没有批量接口,只能一对一发请求。
@@ -163,18 +281,18 @@ func (c *Client) pairDistance(a, b model.Point, mode model.Mode) (float64, error
 	var apiURL string
 	switch mode {
 	case model.ModeDriving:
-		apiURL = "https://restapi.amap.com/v3/direction/driving"
+		apiURL = c.url(pathDrivingDir)
 	case model.ModeWalking:
-		apiURL = "https://restapi.amap.com/v5/direction/walking"
+		apiURL = c.url(pathWalkingV5)
 	case model.ModeTransit:
-		apiURL = "https://restapi.amap.com/v3/direction/transit/integrated"
+		apiURL = c.url(pathTransitDir)
 	default:
 		return 0, fmt.Errorf("unsupported mode %q", mode)
 	}
 
 	q := url.Values{}
 	q.Set("key", c.key)
-	q.Set("origin", coord(a))     // v5/v3 单对接口用 origin/destination
+	q.Set("origin", coord(a)) // v5/v3 单对接口用 origin/destination
 	q.Set("destination", coord(b))
 	log.Printf("[amap] %s %s -> %s", mode, coord(a), coord(b))
 
@@ -248,14 +366,14 @@ func (c *Client) pairDistance(a, b model.Point, mode model.Mode) (float64, error
 func (c *Client) fetchColumn(origins []string, dest model.Point) ([]float64, error) {
 	q := url.Values{}
 	q.Set("key", c.key)
-	q.Set("type", "1")                // 1 = 驾车导航距离,按真实路网
+	q.Set("type", "1") // 1 = 驾车导航距离,按真实路网
 	q.Set("origins", strings.Join(origins, "|"))
 	q.Set("destination", coord(dest)) // 单终点——实测批量只认这种
 
 	// 外部调用打日志是生产惯例:能看清每次请求,排查配额/延迟全靠它。
 	log.Printf("[amap] driving %d origins -> %s", len(origins), coord(dest))
 
-	resp, err := c.http.Get(baseURL + "?" + q.Encode())
+	resp, err := c.http.Get(c.url(pathDistance) + "?" + q.Encode())
 	if err != nil {
 		return nil, fmt.Errorf("amap request: %w", err)
 	}
@@ -302,18 +420,25 @@ func (c *Client) fetchColumn(origins []string, dest model.Point) ([]float64, err
 // RoutePolyline 返回 a→b 在 mode 下的真实路网轨迹,一串 [lng,lat] 坐标。
 // 前端画线用:拿到轨迹点就能画出贴合道路的路线,而不是两点直线。
 // 实测:
-//   driving → v3/direction/driving,steps[].polyline 有轨迹
-//   walking → v5 步行不返回轨迹坐标,要用 v3/direction/walking
-//   transit → 公交由"步行段+公交段"组成,轨迹不连续,返回 nil 让前端画直线
+//
+//	driving → v3/direction/driving,steps[].polyline 有轨迹
+//	walking → v5 步行不返回轨迹坐标,要用 v3/direction/walking
+//	transit → 公交由"步行段+公交段"组成,轨迹不连续,返回 nil 让前端画直线
 func (c *Client) RoutePolyline(a, b model.Point, mode model.Mode) ([][2]float64, error) {
 	var apiURL string
+	// (nil, nil) 和"报错"是两件不同的事,别混:
+	//   - transit:(nil, nil) 表示"这个出行方式本来就没有连续轨迹",是正常的业务事实
+	//   - 未知 mode:报错。以前这里也吞成 (nil, nil),结果 /route?mode=cycling
+	//     会返回 200 + 空数组,前端默默画了条直线——把"我拼错了参数"伪装成"正常返回空"
 	switch mode {
 	case model.ModeDriving:
-		apiURL = "https://restapi.amap.com/v3/direction/driving"
+		apiURL = c.url(pathDrivingDir)
 	case model.ModeWalking:
-		apiURL = "https://restapi.amap.com/v3/direction/walking"
+		apiURL = c.url(pathWalkingV3)
+	case model.ModeTransit:
+		return nil, nil
 	default:
-		return nil, nil // transit:暂不提供真实轨迹
+		return nil, fmt.Errorf("unsupported mode %q for polyline", mode)
 	}
 
 	q := url.Values{}
@@ -422,7 +547,7 @@ func (c *Client) SearchPlaces(keyword, city string, limit int) ([]model.Place, e
 		q.Set("citylimit", "true")
 	}
 
-	resp, err := c.http.Get("https://restapi.amap.com/v3/place/text?" + q.Encode())
+	resp, err := c.http.Get(c.url(pathPlaceText) + "?" + q.Encode())
 	if err != nil {
 		return nil, fmt.Errorf("amap search request: %w", err)
 	}
@@ -454,19 +579,32 @@ func (c *Client) SearchPlaces(keyword, city string, limit int) ([]model.Place, e
 
 	places := make([]model.Place, 0, len(out.Pois))
 	for _, p := range out.Pois {
-		// "lng,lat" 字符串拆开,注意经度在前,和之前距离接口同一个坑。
-		parts := strings.Split(p.Location, ",")
-		if len(parts) != 2 {
-			continue
-		}
-		lng, err1 := strconv.ParseFloat(parts[0], 64)
-		lat, err2 := strconv.ParseFloat(parts[1], 64)
-		if err1 != nil || err2 != nil {
-			continue
+		lng, lat, err := parseCoord(p.Location)
+		if err != nil {
+			continue // 跳过无效数据
 		}
 		places = append(places, model.Place{Name: p.Name, Address: p.Address, Lat: lat, Lng: lng})
 	}
 	return places, nil
+}
+
+// parseCoord 解析 "lng,lat" 字符串成坐标,返回 (lng, lat, error)。
+// 统一处理坐标字符串解析逻辑,避免在多处重复。
+// 注意:高德格式是"经度,纬度"(lng 在前),和 model.Point 字段顺序相反。
+func parseCoord(s string) (lng, lat float64, err error) {
+	parts := strings.Split(s, ",")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("需要 lng,lat 格式")
+	}
+	lng, err = strconv.ParseFloat(parts[0], 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("经度不是数字: %v", err)
+	}
+	lat, err = strconv.ParseFloat(parts[1], 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("纬度不是数字: %v", err)
+	}
+	return lng, lat, nil
 }
 
 // coord 把点拼成高德要求的 "经度,纬度"。注意顺序:经度在前,和
