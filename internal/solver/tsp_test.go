@@ -53,3 +53,36 @@ func TestSolverImprovementChain(t *testing.T) {
 	}
 	t.Logf("最近邻 %.2f → +2-opt %.2f → +模拟退火 %.2f (km)", nnLen, twoOptLen, saLen)
 }
+
+// TestAsymmetricThreePointTrap:用 2026-09-17 smoke 当天的高德实测距离
+// (广州塔/白云山/长隆)钉住两个真实缺陷 —— 它们叠加起来让解算器
+// 在 3 点开放路径上"看见最优解却走不过去":
+//
+//  1. 旧邻域只允许"反转中间段"(j < n-1),n=3 时只能反转单个元素 = 恒等变换,
+//     SA 退化成纯最近邻 —— 顺序根本动不了;
+//  2. 旧判据只算边界两条边,默认反转段内部边不变 —— 对称矩阵成立,
+//     但驾车真实路网不对称:最优移动的收益恰恰藏在内部边 43.8→28.7 的翻转里,
+//     旧公式只看到边界 +0.9,把净赚 14.2km 的一步当成了变差而拒绝。
+//
+// NN = [0,1,2] = 15.445+43.795 = 59.24(smoke 当天服务真实输出);
+// 最优 = [0,2,1] = 16.258+28.651 = 44.909。2-opt/SA 必须够得着它。
+func TestAsymmetricThreePointTrap(t *testing.T) {
+	dists := [][]float64{
+		{0, 15.445, 16.258},
+		{15.445, 0, 43.795},
+		{16.258, 28.651, 0},
+	}
+	const want = 44.909
+
+	twoOpt := TwoOpt(dists, NearestNeighbor(dists, 0))
+	if got := TourLength(dists, twoOpt); got > want+1e-9 {
+		t.Errorf("2-opt = %.3f, 应找到 %.3f 的顺序 [0,2,1]", got, want)
+	}
+	sa := SimulatedAnnealing(dists, 0)
+	if got := TourLength(dists, sa); got > want+1e-9 {
+		t.Errorf("SA = %.3f, 应找到 %.3f 的顺序 [0,2,1]", got, want)
+	}
+	if sa[0] != 0 || twoOpt[0] != 0 {
+		t.Errorf("起点不变量被破坏: 2opt=%v sa=%v", twoOpt, sa)
+	}
+}

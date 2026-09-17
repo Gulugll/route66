@@ -43,6 +43,14 @@ func (s *Service) DistanceMatrix(points []model.Point, mode model.Mode) ([][]flo
 	return haversineMatrix(points), false
 }
 
+// HaversineMatrix 全量直线距离矩阵(公里)。
+// 导出给 planner 做"预矩阵":步行/公交的解序先用免费的直线距离跑完,
+// 真实路网请求只花在最终顺序的相邻边上 —— 解序 0 API,见
+// specs/2026-09-17-prematrix-sa.md。
+func HaversineMatrix(points []model.Point) [][]float64 {
+	return haversineMatrix(points)
+}
+
 // haversineMatrix 全量直线距离矩阵。
 func haversineMatrix(points []model.Point) [][]float64 {
 	n := len(points)

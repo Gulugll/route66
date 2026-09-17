@@ -57,7 +57,11 @@ t1=$(curl -s -o "$TMP/plan1.json" -w '%{time_total}' -X POST "$BASE/plan" \
 km1=$(grep -o '"total_km":[0-9.]*' "$TMP/plan1.json" | cut -d: -f2)
 echo "  原始响应: $(cat "$TMP/plan1.json")"
 echo "  耗时: ${t1}s"
-between "首次 total_km（真实路网）" "$km1" 40 50
+# 区间下界 40 是"识破假降级"的关键:真实路网约 45km+,直线只有 29km。
+# 上界故意放宽到 70:高德路网数据会漂移(2026-09-17 实测 白云山→长隆
+# 从 ~28km 涨到 43.8km,总距离 43.51→59.24),区间要容得下这种外部变化,
+# 但仍要能把"悄悄降级成直线"抓出来。
+between "首次 total_km（真实路网）" "$km1" 40 70
 if grep -q '"is_degraded":true' "$TMP/plan1.json"; then
   bad "发生了降级（is_degraded=true）—— 检查服务日志里的 [matrix]/[plan] 行"
 else
