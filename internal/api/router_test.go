@@ -77,12 +77,12 @@ func fakeAmapServer(t *testing.T, failPaths ...string) *httptest.Server {
 func newTestRouter(t *testing.T, withAmap bool, failPaths ...string) *gin.Engine {
 	t.Helper()
 	if !withAmap {
-		return NewRouter(matrix.New(), nil) // 没有高德客户端 → 纯 haversine
+		return NewRouter(matrix.New(), nil, nil, nil) // 没有高德客户端 → 纯 haversine;不装配异步任务
 	}
 	srv := fakeAmapServer(t, failPaths...)
 	// nil 缓存:测试之间不共享缓存,避免互相"喂"出假的命中
 	am := amap.NewClientWithBase("test-key", srv.URL, nil)
-	return NewRouter(matrix.NewWithAmap(am), am)
+	return NewRouter(matrix.NewWithAmap(am), am, nil, nil)
 }
 
 // doJSON 发一个请求,返回状态码和原始 body。

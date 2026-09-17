@@ -7,6 +7,7 @@ type Config struct {
 	Port      string // 监听端口
 	AmapKey   string // 高德 API key,暂时空着,Phase 1 用
 	RedisAddr string // Redis 地址,Phase 1 用
+	MySQLDSN  string // MySQL 连接串(user:pass@tcp(host:port)/db),Phase 2 用;空 = 异步任务不启用
 }
 
 func Load() Config {
@@ -14,6 +15,7 @@ func Load() Config {
 		Port:      getenv("PORT", "7800"),
 		AmapKey:   os.Getenv("AMAP_KEY"),
 		RedisAddr: getenv("REDIS_ADDR", "localhost:6379"),
+		MySQLDSN:  os.Getenv("MYSQL_DSN"),
 	}
 }
 
