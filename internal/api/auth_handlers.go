@@ -10,6 +10,7 @@ package api
 
 import (
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -32,6 +33,13 @@ func (s *Server) register(c *gin.Context) {
 	}
 	_, err := s.auth.Register(c.Request.Context(), req.Username, req.Password)
 	if err != nil {
+		// 存储故障 → 503 + 固定文案(原文里是 DSN/驱动报错,不能透给前端);
+		// 服务端日志补记原文,排查不丢线索
+		if errors.Is(err, auth.ErrStorageUnavailable) {
+			log.Printf("[auth] register storage error: %v", err)
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "注册服务暂时不可用，请稍后重试"})
+			return
+		}
 		status := http.StatusBadRequest
 		if errors.Is(err, auth.ErrUsernameTaken) {
 			status = http.StatusConflict
@@ -63,6 +71,13 @@ func (s *Server) loginAndStartSession(c *gin.Context, username, password string)
 	if err != nil {
 		if errors.Is(err, auth.ErrBadCredentials) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			return
+		}
+		// 存储故障(数据库没起/连接断) → 503 + 固定文案,
+		// 原文(DSN/驱动报错)只进服务端日志 —— 前端不该看到内部细节
+		if errors.Is(err, auth.ErrStorageUnavailable) {
+			log.Printf("[auth] login storage error: %v", err)
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "登录服务暂时不可用，请稍后重试"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "登录失败: " + err.Error()})

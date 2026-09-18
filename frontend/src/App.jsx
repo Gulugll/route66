@@ -17,11 +17,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { ControlPanel } from './components/ControlPanel.jsx'
-import { AuthDialog } from './components/AuthDialog.jsx'
+import { LoginPage } from './components/LoginPage.jsx'
 import { MapView } from './components/MapView.jsx'
 import { TopBar } from './components/TopBar.jsx'
 import { ToastStack } from './components/ui.jsx'
-import { Icon } from './components/icons.jsx'
 
 import { useAmap } from './hooks/useAmap.js'
 import { useAuth } from './hooks/useAuth.js'
@@ -46,7 +45,6 @@ export default function App() {
   // "勾选 = 手动"的反向 checkbox 文案，结果用户从来没见过自动模式长什么样。
   // 默认值 = 最常用的那条路径，别让用户每次先做一遍配置才能到主线。
   const [manual, setManual] = useState(false)
-  const [authMode, setAuthMode] = useState('login')
 
   // ── 提示条 ──
   // useCallback 包一层，是为了让这个函数的**引用保持稳定**。
@@ -134,41 +132,21 @@ export default function App() {
   }, [points])
 
   // ── 登录墙 ──
-  // 未登录时主功能一个字节都不渲染:整个 App 就是品牌 + 登录/注册表单。
+  // 未登录时渲染独立的整页登录页(不是弹窗):背后没有主界面的任何内容,
+  // 也不存在半透明蒙层"透出"底下东西的问题。登录/注册成功后
+  // LoginPage 内部 location.reload() 整页跳转进主界面(见 LoginPage 文件头:
+  // reload 既是用户理解的"跳转",也是地图初始化时序的正确解)。
   // ready=false 是"还没问过 /auth/me"的加载态,必须等它,否则每次刷新
-  // 都会闪一帧登录页再跳主界面(和 TopBar 当年的防闪烁是同一个问题)。
-  // session 过期也一样走这里:/auth/me 返回 401 → user=null → 回到登录页。
+  // 都会闪一帧登录页再跳主界面。session 过期也走这里:/auth/me 401 → 回登录页。
   if (!auth.ready) {
     return (
-      <div className="app" style={{ display: 'grid', placeItems: 'center' }}>
-        <span style={{ fontSize: 13, color: 'var(--muted)' }}>加载中…</span>
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg-page)' }}>
+        <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>加载中…</span>
       </div>
     )
   }
   if (!auth.user) {
-    return (
-      <div className="app">
-        <header className="topbar">
-          <div className="brand">
-            <Icon name="route" size={26} style={{ color: 'var(--driving)' }} />
-            <span className="brand-title">路线规划器</span>
-          </div>
-        </header>
-        <div className="hairline" />
-        <div
-          style={{
-            flex: 1,
-            display: 'grid',
-            placeItems: 'center',
-            padding: '24px 16px',
-          }}
-        >
-          <div style={{ width: '100%', maxWidth: 380 }}>
-            <AuthDialog mode={authMode} onSubmit={auth} onSwitchMode={setAuthMode} mandatory />
-          </div>
-        </div>
-      </div>
-    )
+    return <LoginPage auth={auth} />
   }
 
   return (

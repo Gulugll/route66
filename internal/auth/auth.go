@@ -179,7 +179,11 @@ func (s *Service) register(ctx context.Context, username, password, role string)
 	}
 	u := &User{Username: username, PasswordHash: string(hash), Role: role}
 	if err := s.store.CreateUser(ctx, u); err != nil {
-		return User{}, err // ErrUsernameTaken 原样上抛,handler 翻译成 409
+		if errors.Is(err, ErrUsernameTaken) {
+			return User{}, err // 原样上抛,handler 翻译成 409
+		}
+		// 存储故障:包上统一标记,原文只在服务端日志可见
+		return User{}, fmt.Errorf("%w: %v", ErrStorageUnavailable, err)
 	}
 	return *u, nil
 }
@@ -192,7 +196,7 @@ func (s *Service) Login(ctx context.Context, username, password string) (User, s
 		return User{}, "", ErrBadCredentials
 	}
 	if err != nil {
-		return User{}, "", err
+		return User{}, "", fmt.Errorf("%w: %v", ErrStorageUnavailable, err)
 	}
 	// bcrypt 校验:即使攻击者拿到库,也只有 hash;
 	// CompareHashAndPassword 内部是常数时间比较,不泄露"前几位对没对"
@@ -201,17 +205,22 @@ func (s *Service) Login(ctx context.Context, username, password string) (User, s
 	}
 	token, err := newToken()
 	if err != nil {
-		return User{}, "", err
+		return User{}, "", fmt.Errorf("%w: %v", ErrStorageUnavailable, err)
 	}
 	sess := &Session{Token: token, UserID: u.ID, ExpiresAt: time.Now().Add(SessionTTL)}
 	if err := s.store.CreateSession(ctx, sess); err != nil {
-		return User{}, "", fmt.Errorf("create session: %w", err)
+		return User{}, "", fmt.Errorf("%w: %v", ErrStorageUnavailable, err)
 	}
 	return u, token, nil
 }
 
 // ErrBadCredentials 登录失败的统一错误。文案故意模糊 —— 防枚举。
 var ErrBadCredentials = errors.New("用户名或密码错误")
+
+// ErrStorageUnavailable 存储层(数据库)故障的统一包装。
+// handler 遇到它必须给**固定文案** + 503,绝不能把 err.Error() 透给前端 ——
+// 那里面是 DSN/表结构/驱动报错原文,属于内部细节(2026-09-18 实测泄漏过)。
+var ErrStorageUnavailable = errors.New("storage unavailable")
 
 // Logout 删除会话。"退出登录"的本质是让服务端忘掉这个 token ——
 // 只清浏览器 cookie 是不够的,token 本身还有效。
