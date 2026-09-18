@@ -134,7 +134,7 @@ func Compute(points []model.Point, mode model.Mode, manual bool, segments []stri
 		// —— 混合出行:每段各自的方式 ——
 		// 每段方式不同 → 没有统一的距离矩阵 → 无法做 TSP,
 		// 顺序就是用户列表顺序,逐段算距离求和。
-		if am == nil {
+		if am == nil || !am.HasAPIKey() {
 			return Result{}, fmt.Errorf("未配置 AMAP_KEY,混合出行不可用")
 		}
 		for i := 0; i < n-1; i++ {
@@ -179,7 +179,7 @@ func Compute(points []model.Point, mode model.Mode, manual bool, segments []stri
 				order = solver.SimulatedAnnealing(dists, 0)
 			}
 			result.OrderIdx = order
-			if am == nil {
+			if am == nil || !am.HasAPIKey() {
 				// 没配 key:直线就是"本来该用的算法",设计如此,不算降级不报警告
 				result.TotalKm = solver.TourLength(dists, order)
 			} else {

@@ -1,0 +1,16 @@
+# 本地开发用的 PostgreSQL(2026-09-17 起,替代退役的 MySQL)。
+# 用法:docker compose up -d   停止:docker compose down(加 -v 连数据卷一起删)
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: routeplanner-pg
+    environment:
+      POSTGRES_USER: routeplanner
+      POSTGRES_PASSWORD: routeplanner
+      POSTGRES_DB: routeplanner
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:

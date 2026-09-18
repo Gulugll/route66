@@ -24,7 +24,7 @@ import { useEffect, useRef } from 'react'
 import { MODE_COLORS, MODE_ICONS, MODE_LABELS, MODES } from '../theme.js'
 import { Icon } from './icons.jsx'
 
-export function MapView({ amap, points, segments, onAddFromMap, onOpenSettings }) {
+export function MapView({ amap, points, segments, onAddFromMap }) {
   const { containerRef, map, status, error, zoomIn, zoomOut } = amap
 
   // 存"地图上的标记对象"。用 ref 而不是 state，因为改它不需要重渲染 ——
@@ -113,18 +113,16 @@ export function MapView({ amap, points, segments, onAddFromMap, onOpenSettings }
       {status === 'no-key' && (
         <div className="map-empty">
           <Icon name="pin" size={28} style={{ color: 'var(--border)' }} />
-          <span className="map-empty-title">还没配置高德 Key</span>
-          {/* 注意别写"填入后即可查看真实路网" —— 地图渲染靠的是这个 JS key，
-              但真实路网轨迹来自后端 /route，要的是服务端另一把「Web服务」key。
-              写混了，用户填完发现没路网，会以为是自己填错了。 */}
+          <span className="map-empty-title">还没有配置高德 Key</span>
+          {/* 登录墙改造后 key 不再由使用者手填:管理员在管理台(7801)配置,
+              经 /config/public 下发到这里。这里的文案只说"去哪找谁",不说"自己填"——
+              以前写"填入后即可查看真实路网"还把 JS key 和服务端 AMAP_KEY 混为一谈,
+              踩过文案误导的坑,两种 key 的分工见 README「高德 key」一节。 */}
           <span className="map-empty-desc">
-            填入 JS key 后即可显示地图、在地图上点选地点
+            地图渲染需要高德 JS key,由管理员在管理台统一配置
             <br />
-            真实路网轨迹由后端提供，需服务端另配 AMAP_KEY
+            配置保存后刷新本页即可生效
           </span>
-          <button className="btn btn--primary" onClick={onOpenSettings} style={{ height: 30, borderRadius: 15, fontSize: 12 }}>
-            打开设置
-          </button>
         </div>
       )}
 
@@ -142,11 +140,8 @@ export function MapView({ amap, points, segments, onAddFromMap, onOpenSettings }
           <span className="map-empty-desc">
             {error}
             <br />
-            key 无效或未把当前域名加入白名单。可以点地图上的方式改用手动输入坐标。
+            key 无效或未把当前域名加入白名单。请确认页面功能仍可用（手动输入坐标、规划不受影响）。
           </span>
-          <button className="btn btn--primary" onClick={onOpenSettings} style={{ height: 30, borderRadius: 15, fontSize: 12 }}>
-            重新设置
-          </button>
         </div>
       )}
 

@@ -14,6 +14,7 @@
 set -u
 
 BASE=${BASE:-http://localhost:7800}
+ADMIN_BASE=${ADMIN_BASE:-http://localhost:7801}
 REDIS_CLI=${REDIS_CLI:-.redis-src/redis-7.2.5/src/redis-cli}
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -125,6 +126,29 @@ c1=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/plan" -H 'Content-Typ
 c2=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/plan" -H 'Content-Type: application/json' \
      -d '{"origin":{"name":"a","lat":23,"lng":113},"destinations":[{"name":"b","lat":23,"lng":113},{"name":"c","lat":23,"lng":113}],"segments":["walking"]}')
 [ "$c2" = "400" ] && ok "segments 长度不符 → 400" || bad "segments 长度不符 → ${c2}（期望 400）"
+
+# ── 9. 登录与管理台(可选段:没配 PG/ADMIN_PORT 时整段跳过)──
+# 判据:7801 的 /admin/healthz 通 = 管理端已启用,才做认证断言。
+# 用户名带 $RANDOM:smoke 重跑不会撞 unique 约束。
+adminUp=$(curl -s -o /dev/null -w '%{http_code}' "$ADMIN_BASE/admin/healthz" || true)
+if [ "$adminUp" = "200" ]; then
+  echo
+  echo "== 9. 登录系统与管理台（可选段）=="
+  u="smoke_$RANDOM"
+  c3=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/auth/register" -H 'Content-Type: application/json' \
+       -d "{\"username\":\"$u\",\"password\":\"smoke-pass-66\"}")
+  [ "$c3" = "200" ] && ok "注册 → 200" || bad "注册 → ${c3}（期望 200）"
+  c4=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/auth/register" -H 'Content-Type: application/json' \
+       -d "{\"username\":\"$u\",\"password\":\"smoke-pass-66\"}")
+  [ "$c4" = "409" ] && ok "重名注册 → 409" || bad "重名注册 → ${c4}（期望 409）"
+  c5=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/auth/me")
+  [ "$c5" = "401" ] && ok "未登录 /auth/me → 401" || bad "/auth/me → ${c5}（期望 401）"
+  c6=$(curl -s -o /dev/null -w '%{http_code}' "$ADMIN_BASE/admin/api/keys")
+  [ "$c6" = "401" ] && ok "未登录管理 API → 401" || bad "管理 API → ${c6}（期望 401）"
+else
+  echo
+  echo "== 9. 登录系统与管理台：跳过（7801 管理端未启用，属正常配置）=="
+fi
 
 echo
 echo "======================================"

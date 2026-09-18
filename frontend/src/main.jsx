@@ -28,8 +28,8 @@ root.render(
   // 定时器没清、地图实例没 destroy），StrictMode 下会立刻现形 ——
   // 而不是等到上线后用户切来切去才慢慢泄漏。
   //
-  // 这个项目里 useAmap（地图销毁）、SettingsDialog（键盘监听）、
-  // MapView（高德事件监听）三处都是靠它验出来的。
+  // 这个项目里 useAmap（地图销毁）、MapView（高德事件监听）、
+  // App（登录墙三分支）都是靠它验出来的。
   <StrictMode>
     <App />
   </StrictMode>

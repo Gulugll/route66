@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Route66 管理台</title>
+<style>
+  /* 管理台刻意不用框架不用构建:三个表单的原生页面,维护成本最低。
+     设计变量对齐前端 tokens.css 的极简版:墨色交互、浅色底。 */
+  :root { --ink:#1D1D1F; --muted:#6e6e73; --line:#e5e5ea; --bg:#f5f5f7; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:24px; font:15px/1.6 -apple-system,"PingFang SC",sans-serif; color:var(--ink); background:var(--bg); }
+  h1 { font-size:20px; margin:0 0 16px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:16px 20px; margin-bottom:16px; max-width:640px; }
+  .card h2 { font-size:15px; margin:0 0 12px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  input { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font:inherit; }
+  button { margin-top:12px; padding:8px 18px; border:none; border-radius:8px; background:var(--ink); color:#fff; font:inherit; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); }
+  .row { display:flex; align-items:center; gap:8px; margin:6px 0; }
+  .src { font-size:12px; padding:2px 8px; border-radius:999px; background:var(--bg); color:var(--muted); }
+  .src.db { color:#1a7f37; } .src.none { color:#c0392b; }
+  .msg { margin-top:10px; font-size:13px; min-height:1em; }
+  .err { color:#c0392b; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+
+<!-- 登录卡:未登录时唯一可见的东西 -->
+<div class="card" id="loginCard">
+  <h2>管理员登录</h2>
+  <form id="loginForm">
+    <label for="username">用户名</label>
+    <input id="username" autocomplete="username" required>
+    <label for="password">密码</label>
+    <input id="password" type="password" autocomplete="current-password" required>
+    <button type="submit">登录</button>
+    <p class="msg err" id="loginMsg"></p>
+  </form>
+</div>
+
+<!-- 登录后的内容 -->
+<div id="main" class="hidden">
+  <h1>Route66 管理台 <span id="me" style="font-size:13px;color:var(--muted)"></span></h1>
+
+  <div class="card">
+    <h2>高德 Key 管理（DB 优先，清空则回落 .env）</h2>
+    <div class="row"><strong style="flex:1">Web服务 key（后端 REST）</strong><span class="src" id="src-amap_rest_key"></span></div>
+    <label for="amap_rest_key">新值（留空提交 = 清除该项，回落 env）</label>
+    <input id="amap_rest_key" placeholder="留空 = 不修改该项；输入空格后提交 = 清除">
+
+    <div class="row" style="margin-top:14px"><strong style="flex:1">JS API key（浏览器渲染）</strong><span class="src" id="src-amap_js_key"></span></div>
+    <label for="amap_js_key">新值</label>
+    <input id="amap_js_key">
+
+    <div class="row" style="margin-top:14px"><strong style="flex:1">JS 安全密钥</strong><span class="src" id="src-amap_js_sec"></span></div>
+    <label for="amap_js_sec">新值</label>
+    <input id="amap_js_sec">
+
+    <button type="button" id="saveKeys">保存（立即生效，无需重启）</button>
+    <button type="button" class="ghost" id="clearKeys">清空全部（回落 .env）</button>
+    <p class="msg" id="keysMsg"></p>
+  </div>
+
+  <div class="card">
+    <h2>用户列表</h2>
+    <table>
+      <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>创建时间</th></tr></thead>
+      <tbody id="userRows"></tbody>
+    </table>
+  </div>
+
+  <button class="ghost" id="logoutBtn">退出登录</button>
+</div>
+
+<script>
+// 管理台的全部交互逻辑。要点:
+// 1. 页面加载先 GET /admin/api/me 探登录态 —— cookie 自动带,不需要手动管理 token
+// 2. 回显的 key 是掩码,输入框留空提交 = 不修改该项(后端只更新出现的键)
+// 3. "清除"用输入空格表达:trim 后变空串 = 后端删除该项回落 env
+const $ = (id) => document.getElementById(id);
+
+async function req(path, options) {
+  const resp = await fetch(path, options);
+  let data = null;
+  try { data = await resp.json(); } catch { data = null; }
+  if (!resp.ok) throw new Error(data?.error || ('HTTP ' + resp.status));
+  return data;
+}
+
+function showMain(on) {
+  $('loginCard').classList.toggle('hidden', on);
+  $('main').classList.toggle('hidden', !on);
+}
+
+async function refresh() {
+  try {
+    const me = await req('/admin/api/me');
+    showMain(true);
+    $('me').textContent = '(' + me.user.username + ')';
+    const keys = await req('/admin/api/keys');
+    for (const name of ['amap_rest_key', 'amap_js_key', 'amap_js_sec']) {
+      const e = keys[name] || { value: '', source: 'none' };
+      $('src-' + name).textContent = e.value + '（' + e.source + '）';
+      $('src-' + name).className = 'src ' + e.source;
+    }
+    const users = await req('/admin/api/users');
+    $('userRows').innerHTML = users.users.map(u =>
+      '<tr><td>' + u.id + '</td><td>' + u.username + '</td><td>' + u.role + '</td><td>' +
+      new Date(u.created_at).toLocaleString() + '</td></tr>').join('');
+  } catch (e) {
+    showMain(false);
+  }
+}
+
+$('loginForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  $('loginMsg').textContent = '';
+  try {
+    await req('/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: $('username').value, password: $('password').value }),
+    });
+    await refresh();
+  } catch (e) { $('loginMsg').textContent = e.message; }
+});
+
+$('saveKeys').addEventListener('click', async () => {
+  $('keysMsg').textContent = ''; $('keysMsg').className = 'msg';
+  // 只提交"填了内容"的框 —— 空框 = 不修改该项(部分更新语义,后端按出现的键处理)
+  const body = {};
+  for (const name of ['amap_rest_key', 'amap_js_key', 'amap_js_sec']) {
+    const v = $(name).value.trim();
+    if (v !== '') body[name] = v;
+    $(name).value = ''; // 提交后清空输入框,界面始终只显示掩码
+  }
+  try {
+    await req('/admin/api/keys', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    $('keysMsg').textContent = '已保存，立即生效';
+    await refresh();
+  } catch (e) { $('keysMsg').textContent = e.message; $('keysMsg').className = 'msg err'; }
+});
+
+$('clearKeys').addEventListener('click', async () => {
+  // 清空全部:三个键都提交空串 —— 后端语义 = 删除该项,回落 env
+  try {
+    await req('/admin/api/keys', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amap_rest_key: '', amap_js_key: '', amap_js_sec: '' }),
+    });
+    $('keysMsg').textContent = '已清空，回落到 .env 兜底值';
+    await refresh();
+  } catch (e) { $('keysMsg').textContent = e.message; $('keysMsg').className = 'msg err'; }
+});
+
+$('logoutBtn').addEventListener('click', async () => {
+  await req('/admin/logout', { method: 'POST' });
+  showMain(false);
+});
+
+refresh();
+</script>
+</body>
+</html>

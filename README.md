@@ -140,8 +140,40 @@ open http://localhost:7800
 
 打开页面 → 右上角「设置」→ 填 JS API key（有安全密钥就一起填）→ 保存重载。
 
-> 换 `AMAP_KEY` 必须**重启后端**才生效（它是启动时读的环境变量）；
-> JS key 则是点「保存并重载地图」即时生效。
+> JS key 现在有三层来源：**设置弹层的个人覆盖 > 管理台配置（DB）> env 兜底**。
+> 后端的「Web服务」key 也支持管理台在线更换，**无需重启**（见下一节）。
+
+### 2.5 登录系统 + 管理台（PostgreSQL，可选）
+
+配了数据库后，服务多出认证与管理能力；**不配则全部不启用，同步规划照常**。
+
+```bash
+# 起 PostgreSQL(自建,推荐 docker compose)
+docker compose up -d          # postgres:16-alpine,5432 端口
+
+# .env 里追加(完整示例见 .env 本地文件,已 gitignore):
+# PG_DSN=postgres://routeplanner:routeplanner@localhost:5432/routeplanner?sslmode=disable
+# ADMIN_PORT=7801
+# ADMIN_USER=admin
+# ADMIN_PASSWORD=改成你自己的
+
+go run .
+```
+
+| 端口 | 内容 |
+|---|---|
+| `:7800` | 用户端（现有规划界面 + `/auth/*` 登录注册 + `/config/public` 下发 JS key） |
+| `:7801` | 管理台（掩码查看/在线更换高德 key、用户列表；非 admin 一律 403） |
+
+- **key 优先级**：管理台(DB) > `.env`(兜底)。管理台改 key **立即生效不用重启**；
+  把某项清空则回落到 env 兜底值
+- **安全模型**：REST key 只存在服务端绝不下发；JS key 天生公开（下发不泄密）；
+  密码 bcrypt 存储；登录失败不区分"无此用户/密码错"（防枚举）；
+  会话为 HttpOnly cookie —— cookie 不按端口隔离，故 7801 每条路由都强制 `RequireAdmin`
+- 管理台是原生 HTML 单页（`admin/`，不进构建），设计原则："不是所有前端都该上框架"
+
+> ⚠️ 换库说明：2026-09-17 起从 MySQL 迁到 PostgreSQL（GORM driver 替换，
+> repo 层业务代码零改动）；旧 `routeplanner-mysql` 容器可停用退役。
 
 ### 3. 用起来
 
