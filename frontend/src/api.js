@@ -108,3 +108,48 @@ export async function fetchRoute(a, b, mode) {
   const data = await request('/route?' + params.toString())
   return data.polyline || []
 }
+
+// ── 认证与公开配置（会话靠 HttpOnly cookie，前端不碰任何 token）──
+
+/** 注册新用户。后端注册成功会顺带登录（发会话 cookie）。 */
+export function registerUser(username, password) {
+  return request('/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+/** 登录。凭据错抛 401 的中文错误。 */
+export function loginUser(username, password) {
+  return request('/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+/** 登出：后端删服务端会话 + 清 cookie。 */
+export function logoutUser() {
+  return request('/auth/logout', { method: 'POST' })
+}
+
+/** 当前登录用户。未登录抛错（401）。 */
+export async function fetchMe() {
+  const data = await request('/auth/me')
+  return data.user
+}
+
+/**
+ * 拉取管理员配置的 JS key / 安全密钥（公开接口，JS key 本来就暴露在浏览器里）。
+ * 用于「localStorage 没有个人覆盖」时的默认值 —— 三层优先级的中间一层。
+ * 拉不到（旧版后端 / 网络问题）返回 null，调用方静默回退到空态。
+ */
+export async function fetchPublicConfig() {
+  try {
+    const data = await request('/config/public')
+    return data
+  } catch {
+    return null
+  }
+}

@@ -17,12 +17,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { ControlPanel } from './components/ControlPanel.jsx'
+import { AuthDialog } from './components/AuthDialog.jsx'
 import { MapView } from './components/MapView.jsx'
-import { SettingsDialog } from './components/SettingsDialog.jsx'
 import { TopBar } from './components/TopBar.jsx'
 import { ToastStack } from './components/ui.jsx'
+import { Icon } from './components/icons.jsx'
 
-import { useAmap, reloadForNewKey } from './hooks/useAmap.js'
+import { useAmap } from './hooks/useAmap.js'
+import { useAuth } from './hooks/useAuth.js'
 import { usePlan } from './hooks/usePlan.js'
 import { usePoints } from './hooks/usePoints.js'
 import { useSettings } from './hooks/useSettings.js'
@@ -32,10 +34,11 @@ import { MAX_POINTS_BATCH, MAX_POINTS_PAIRWISE } from './theme.js'
 
 export default function App() {
   // ── 各个 hook 管自己那一块 ──
-  const { mapKey, jscode, saveSettings } = useSettings()
+  const { mapKey, jscode } = useSettings()
   const { points, addPoint, removePoint, movePoint, setLegMode } = usePoints()
   const plan = usePlan()
   const { toasts, push, dismiss } = useToasts()
+  const auth = useAuth()
   const amap = useAmap(mapKey, jscode)
 
   // 默认自动模式：产品的核心卖点就是"多点自动排序"（后端 TSP），
@@ -43,7 +46,7 @@ export default function App() {
   // "勾选 = 手动"的反向 checkbox 文案，结果用户从来没见过自动模式长什么样。
   // 默认值 = 最常用的那条路径，别让用户每次先做一遍配置才能到主线。
   const [manual, setManual] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [authMode, setAuthMode] = useState('login')
 
   // ── 提示条 ──
   // useCallback 包一层，是为了让这个函数的**引用保持稳定**。
@@ -130,25 +133,53 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [points])
 
-  // ── 保存 key 后整页刷新 ──
-  const handleSaveSettings = useCallback(
-    (key, code) => {
-      if (!saveSettings(key, code)) {
-        showError('key 不能为空')
-        return
-      }
-      setSettingsOpen(false)
-      // 高德脚本是把 key 写在 <script src> 里的，换 key 只能重新加载脚本。
-      // 整页刷新比"卸载旧脚本再注入新脚本"省事得多，而且能保证
-      // 地图实例、覆盖物、事件监听全部干净重来。
-      reloadForNewKey()
-    },
-    [saveSettings, showError]
-  )
+  // ── 登录墙 ──
+  // 未登录时主功能一个字节都不渲染:整个 App 就是品牌 + 登录/注册表单。
+  // ready=false 是"还没问过 /auth/me"的加载态,必须等它,否则每次刷新
+  // 都会闪一帧登录页再跳主界面(和 TopBar 当年的防闪烁是同一个问题)。
+  // session 过期也一样走这里:/auth/me 返回 401 → user=null → 回到登录页。
+  if (!auth.ready) {
+    return (
+      <div className="app" style={{ display: 'grid', placeItems: 'center' }}>
+        <span style={{ fontSize: 13, color: 'var(--muted)' }}>加载中…</span>
+      </div>
+    )
+  }
+  if (!auth.user) {
+    return (
+      <div className="app">
+        <header className="topbar">
+          <div className="brand">
+            <Icon name="route" size={26} style={{ color: 'var(--driving)' }} />
+            <span className="brand-title">路线规划器</span>
+          </div>
+        </header>
+        <div className="hairline" />
+        <div
+          style={{
+            flex: 1,
+            display: 'grid',
+            placeItems: 'center',
+            padding: '24px 16px',
+          }}
+        >
+          <div style={{ width: '100%', maxWidth: 380 }}>
+            <AuthDialog mode={authMode} onSubmit={auth} onSwitchMode={setAuthMode} mandatory />
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="app">
-      <TopBar onOpenSettings={() => setSettingsOpen(true)} />
+      <TopBar
+        user={auth.user}
+        onLogout={async () => {
+          await auth.logout()
+          push('已退出登录', 'info')
+        }}
+      />
       <div className="hairline" />
 
       <div className="body">
@@ -179,23 +210,12 @@ export default function App() {
           points={points}
           segments={plan.segments}
           onAddFromMap={handleAddFromMap}
-          onOpenSettings={() => setSettingsOpen(true)}
         />
       </div>
 
       {/* 提示条堆栈。渲染在最外层，用 position:fixed 浮在页面上方 ——
           这样它出现在哪里不受面板的 overflow 影响。 */}
       <ToastStack toasts={toasts} onDismiss={dismiss} />
-
-      {/* 条件渲染弹层：打开 = 挂载，关闭 = 卸载（见 SettingsDialog 的注释） */}
-      {settingsOpen && (
-        <SettingsDialog
-          initialKey={mapKey}
-          initialJscode={jscode}
-          onSave={handleSaveSettings}
-          onClose={() => setSettingsOpen(false)}
-        />
-      )}
     </div>
   )
 }

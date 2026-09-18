@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"time"
 
-	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -39,15 +39,18 @@ const (
 // 的那天再拆,才是拆的正确时机)。
 //
 // 表结构唯一真相源就是这些 gorm 标签:
-//   - status 用 ENUM,数据库层面就挡住非法状态
+//   - status 用 varchar(16),三态约束由代码层保证 —— 曾经用过 MySQL 的
+//     `type:enum('queued',...)`,换 PostgreSQL 时才发现在 MySQL 里写
+//     方言类型标签=把可移植性钉死在一款数据库上(2026-09-17 换 PG 的实际教训)。
+//     "该数据库层约束还是代码层约束"是权衡:ENUM 更硬但不可移植,varchar 松但通用
 //   - (status, created_at) 复合索引:将来"按状态翻任务列表"会用到
 //   - CreatedAt/UpdatedAt 是 GORM 的约定字段名,建行/改行时自动填充,
 //     不用我们手动 SET
 type Task struct {
 	ID         int64     `gorm:"primaryKey;autoIncrement"`
-	ReqJSON    []byte    `gorm:"column:req_json;type:json;not null"`
-	Status     string    `gorm:"column:status;type:enum('queued','done','failed');default:queued;index:idx_status_created,priority:1"`
-	ResultJSON []byte    `gorm:"column:result_json;type:json"`
+	ReqJSON    []byte    `gorm:"column:req_json;type:jsonb;not null"`
+	Status     string    `gorm:"column:status;type:varchar(16);default:queued;index:idx_status_created,priority:1"`
+	ResultJSON []byte    `gorm:"column:result_json;type:jsonb"`
 	Error      string    `gorm:"column:error;type:text"`
 	CreatedAt  time.Time `gorm:"column:created_at;index:idx_status_created,priority:2"`
 	UpdatedAt  time.Time `gorm:"column:updated_at"`
@@ -72,11 +75,12 @@ type GormTaskRepo struct {
 	db *gorm.DB
 }
 
-// NewGorm 建立 MySQL 连接并返回仓库。
-// DSN 形如 user:pass@tcp(host:3306)/dbname?charset=utf8mb4&parseTime=True。
-// parseTime=True 是必须的:没有它 MySQL 的 DATETIME 不会转成 time.Time。
+// NewGorm 建立 PostgreSQL 连接并返回仓库。
+// DSN 形如 host=localhost port=5432 user=xxx password=xxx dbname=routeplanner sslmode=disable。
+// 2026-09-17 从 MySQL 换过来:GORM 的红利就在这 —— repo 层业务代码一行没改,
+// 只动了 driver 和两处方言标签(enum→varchar, json→jsonb)。
 func NewGorm(dsn string) (*GormTaskRepo, error) {
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		// GORM 默认日志在错误时才打,慢查询阈值保持默认 ——
 		// 教学规模不需要自定义 logger,但要知道这个东西存在
 		Logger: logger.Default.LogMode(logger.Warn),
@@ -89,12 +93,16 @@ func NewGorm(dsn string) (*GormTaskRepo, error) {
 		return nil, fmt.Errorf("get sql.DB: %w", err)
 	}
 	// 连接池参数按"解算任务量"给保守值:任务本来就串行消费,
-	// 池子开大了除了多占 MySQL 连接没有任何收益
+	// 池子开大了除了多占 PG 连接没有任何收益
 	sqlDB.SetMaxOpenConns(5)
 	sqlDB.SetMaxIdleConns(2)
 	sqlDB.SetConnMaxLifetime(time.Hour)
 	return &GormTaskRepo{db: db}, nil
 }
+
+// DB 暴露底层 *gorm.DB,给需要同库共连的其他包(auth/settings)用。
+// 返回的是同一连接池 —— 一次连接多包共用,不开第二条池子。
+func (r *GormTaskRepo) DB() *gorm.DB { return r.db }
 
 // Migrate 建表(已存在则比对差异做增量调整)。启动时跑一次。
 // AutoMigrate 是 GORM 的建表/改表方案:教学规模一条调用替代迁移工具,

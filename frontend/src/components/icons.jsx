@@ -138,6 +138,14 @@ const Spinner = (p) => (
   </Svg>
 )
 
+// 人形图标:头(圆) + 肩(弧线),登录按钮用
+const UserIcon = (p) => (
+  <Svg {...p}>
+    <circle cx="12" cy="8.2" r="3.6" {...STROKE} strokeWidth={1.9} />
+    <path d="M5 19.4c1.2-3.3 3.8-4.9 7-4.9s5.8 1.6 7 4.9" {...STROKE} strokeWidth={1.9} />
+  </Svg>
+)
+
 const AlertTriangle = (p) => (
   <Svg {...p}>
     <path d="M12 3.6l9 15.8H3l9-15.8z" {...STROKE} />
@@ -192,6 +200,7 @@ const REGISTRY = {
   plus: Plus,
   minus: Minus,
   check: Check,
+  user: UserIcon,
   checkCircle: CheckCircle,
   clock: Clock,
   circle: Circle,

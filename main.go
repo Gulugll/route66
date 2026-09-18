@@ -7,92 +7,167 @@ import (
 
 	"awesomeProject/internal/amap"
 	"awesomeProject/internal/api"
+	"awesomeProject/internal/auth"
 	"awesomeProject/internal/cache"
 	"awesomeProject/internal/config"
 	"awesomeProject/internal/matrix"
 	"awesomeProject/internal/queue"
 	"awesomeProject/internal/repo"
+	"awesomeProject/internal/settings"
 	"awesomeProject/internal/worker"
 )
 
 // main 是装配层:读配置、拼好各包、启动。只在这里做"接线",不写业务逻辑。
 // 装配策略一以贯之:外部依赖没配/挂了,对应功能降级或不启用,服务其余部分照常跑:
-//   1. 缓存:优先 Redis(跨重启/多实例共享),连不上降级进程内 map
-//   2. 距离:优先高德(真实路网),失败降级 haversine 直线
-//   3. 异步任务:配了 MYSQL_DSN 才启用(Phase 2);没配则同步 /plan 照常,异步 /plans 不注册
+//  1. 缓存:优先 Redis(跨重启/多实例共享),连不上降级进程内 map
+//  2. 距离:高德客户端常驻,key 动态取(管理端 DB > env 兜底),没 key 走 haversine
+//  3. 数据库:配了 PG_DSN 才启用认证/异步任务/管理端;没配则同步 /plan 照常
+//  4. 管理端:独立端口(7801)单独一个引擎,和用户端(7800)同进程
 func main() {
 	cfg := config.Load()
 	ctx := context.Background() // worker 的生命周期;进程退出时随之结束(教学规模不做优雅停机)
 
-	// 这两个变量各跨二十多行,所以用完整词组而不是 m / am:
-	// 短名的长度要和作用域匹配,否则读代码的人得一路往上翻才知道 m 是什么。
-	var matrixService *matrix.Service
-	var amapClient *amap.Client // 传给 /search 用;没 key 时保持 nil
-	if cfg.AmapKey != "" {
-		// —— 缓存层装配:Redis 优先,连不上降级内存 ——
-		var distCache cache.Cache
-		if redisCache, err := cache.NewRedis(cfg.RedisAddr, 24*time.Hour); err != nil {
-			log.Printf("redis unavailable (%v), using in-memory cache", err)
-			distCache = cache.NewMemory(24 * time.Hour)
-		} else {
-			distCache = redisCache
-			log.Printf("redis cache enabled at %s", cfg.RedisAddr)
-		}
-
-		// —— 距离层装配:高德优先,失败降级 haversine ——
-		amapClient = amap.NewClient(cfg.AmapKey, distCache)
-		matrixService = matrix.NewWithAmap(amapClient)
-		log.Printf("amap enabled (key set), fallback to haversine on failure")
+	// —— 缓存层装配:Redis 优先,连不上降级内存 ——
+	// 现在无条件装配(以前只在有 key 时才装):key 本身也运行时可变,
+	// 装配时机不再和"有没有 key"绑定
+	var distCache cache.Cache
+	if redisCache, err := cache.NewRedis(cfg.RedisAddr, 24*time.Hour); err != nil {
+		log.Printf("redis unavailable (%v), using in-memory cache", err)
+		distCache = cache.NewMemory(24 * time.Hour)
 	} else {
-		matrixService = matrix.New()
-		log.Printf("amap key not set (AMAP_KEY), using haversine straight-line distance")
+		distCache = redisCache
+		log.Printf("redis cache enabled at %s", cfg.RedisAddr)
 	}
 
-	// —— 异步任务装配(Phase 2):MySQL 存任务档案 + Redis Stream 做传送带 ——
-	// 开关是 MYSQL_DSN:user:pass@tcp(host:3306)/dbname。没配则 /plans 不注册,
-	// 同步 /plan 照常 —— 异步是"新增能力",不该成为服务的硬依赖。
+	// —— 配置中心 + 数据库:PG_DSN 是认证/异步/管理端的总开关 ——
+	// keyProvider 即使没有 DB 也要存在:它的 fallback 直接给 env 值,
+	// amap.Client 拿到的永远是同一个查询接口,DB 配没配对它透明
+	var keyProvider *settings.Provider
+	var authSvc *auth.Service
 	var plansRepo repo.TaskRepo
 	var taskQueue *queue.Queue
-	if cfg.MySQLDSN != "" {
-		plansRepo, taskQueue = setupAsync(ctx, cfg, matrixService, amapClient)
+
+	if cfg.PGDSN != "" {
+		gormRepo, err := repo.NewGorm(cfg.PGDSN)
+		if err == nil {
+			err = gormRepo.Migrate(ctx)
+		}
+		if err != nil {
+			log.Printf("postgres unavailable (%v), auth/async/admin disabled", err)
+		} else {
+			log.Printf("postgres connected, tasks/users/app_settings ready")
+			plansRepo = gormRepo
+
+			authStore := auth.NewGormStore(gormRepo.DB())
+			if err := authStore.Migrate(ctx); err != nil {
+				log.Printf("auth migrate failed: %v", err)
+			} else {
+				authSvc = auth.NewService(authStore)
+				// 种子管理员:env 给了就确保存在;没给则跳过(管理端仍可注册普通用户,
+				// 但没人能进管理 API —— 日志里说清楚,别让人纳闷 403)
+				if cfg.AdminUser != "" && cfg.AdminPass != "" {
+					if err := authSvc.EnsureSeedAdmin(ctx, cfg.AdminUser, cfg.AdminPass); err != nil {
+						log.Printf("seed admin failed: %v", err)
+					} else {
+						log.Printf("admin account ensured: %s", cfg.AdminUser)
+					}
+				} else {
+					log.Printf("ADMIN_USER/ADMIN_PASSWORD not set, no admin account created")
+				}
+			}
+
+			settingStore := settings.NewGormSettingStore(gormRepo.DB())
+			if err := settingStore.Migrate(ctx); err != nil {
+				log.Printf("settings migrate failed: %v", err)
+			}
+			keyProvider = settings.NewProvider(settingStore, envFallback(cfg))
+		}
 	} else {
-		log.Printf("MYSQL_DSN not set, async /plans disabled (sync /plan unaffected)")
+		keyProvider = settings.NewProvider(nil, envFallback(cfg)) // 纯 env 模式
+		log.Printf("PG_DSN not set: auth/async/admin disabled (sync /plan unaffected)")
 	}
 
-	router := api.NewRouter(matrixService, amapClient, plansRepo, taskQueue)
+	// —— 距离层装配:客户端常驻,key 动态取 ——
+	// keyFn 每次请求现查 Provider(DB>env,自带缓存):管理端改 key 不重启即生效
+	amapClient := amap.NewClient(cfg.AmapKey, distCache).WithKeyFn(func() string {
+		return keyProviderValue(keyProvider, settings.KeyAmapRest, cfg.AmapKey)
+	})
+	matrixService := matrix.NewWithAmap(amapClient)
 
-	log.Printf("listening on :%s", cfg.Port)
-	log.Fatal(router.Run(":" + cfg.Port))
+	// —— 异步任务装配:复用同一个 PG;Redis Stream 做传送带 ——
+	if plansRepo != nil {
+		taskQueue = queue.New(cfg.RedisAddr, "plan_tasks", "workers", "")
+		go func() {
+			if err := worker.Run(ctx, taskQueue, plansRepo, matrixService, amapClient); err != nil &&
+				err != context.Canceled {
+				log.Printf("[worker] exited: %v", err)
+			}
+		}()
+		log.Printf("async plan tasks enabled (postgres + stream plan_tasks)")
+	}
+
+	// —— 用户端引擎(:7800)——
+	envFallbacks := map[string]string{
+		settings.KeyAmapRest:  cfg.AmapKey,
+		settings.KeyAmapJS:    cfg.AmapJSKey,
+		settings.KeyAmapJSSec: cfg.AmapJSSec,
+	}
+	opts := []api.Option{
+		api.WithSettings(keyProvider),
+		api.WithEnvFallbacks(envFallbacks),
+	}
+	if authSvc != nil {
+		opts = append(opts, api.WithAuth(authSvc))
+	}
+	router := api.NewRouter(matrixService, amapClient, plansRepo, taskQueue, opts...)
+
+	// —— 两个引擎,任一退出即整个进程退出(教学规模不做各自的优雅停机) ——
+	errCh := make(chan error, 2)
+	go func() {
+		log.Printf("listening on :%s", cfg.Port)
+		errCh <- router.Run(":" + cfg.Port)
+	}()
+
+	// —— 管理端引擎(:7801)——
+	// 依赖 auth(角色门禁)+ settings(key 读写);没配 PG 就没有这两样,
+	// 管理端不启动 —— 404 的端口比 503 的诚实(同一原则)
+	if cfg.AdminPort != "" && authSvc != nil {
+		adminRouter := api.NewAdminRouter(authSvc, keyProvider, "admin", envFallbacks)
+		go func() {
+			log.Printf("admin listening on :%s", cfg.AdminPort)
+			errCh <- adminRouter.Run(":" + cfg.AdminPort)
+		}()
+	} else {
+		log.Printf("admin server disabled (needs ADMIN_PORT + PG_DSN)")
+	}
+	log.Fatalf("server exited: %v", <-errCh)
 }
 
-// setupAsync 把异步链路的四件套接起来:GORM 连接 → 建表 → 队列 → 后台 worker。
-// 单独拆一个函数:main 的主干只该有"接线",逐步 Try 的样板代码收在子函数里。
-// 任何一步失败都返回 (nil, nil) —— 异步整体禁用,服务照常起,日志里说清原因。
-func setupAsync(ctx context.Context, cfg config.Config,
-	m *matrix.Service, am *amap.Client) (repo.TaskRepo, *queue.Queue) {
-
-	// 连接池参数在 NewGorm 内部配置;连接是懒建立的,不 Migrate/用一下不知道配没配对
-	plansRepo, err := repo.NewGorm(cfg.MySQLDSN)
-	if err == nil {
-		err = plansRepo.Migrate(ctx)
-	}
-	if err != nil {
-		log.Printf("async disabled: %v", err)
-		return nil, nil
-	}
-	log.Printf("mysql connected, tasks table ready")
-
-	// Stream 和距离缓存各持各的 Redis 连接:职责独立,互不牵连
-	taskQueue := queue.New(cfg.RedisAddr, "plan_tasks", "workers", "")
-
-	// 后台解算者:单个 goroutine 串行消费。要提吞吐是"多起几个 worker 进程"
-	// 的事(消费组自动分摊),不是在这里加 goroutine 的事
-	go func() {
-		if err := worker.Run(ctx, taskQueue, plansRepo, m, am); err != nil &&
-			err != context.Canceled {
-			log.Printf("[worker] exited: %v", err)
+// envFallback 生成"配置名 → env 值"的兜底查询,交给 Provider。
+// settings 包自己不读环境变量,这个约定在这里兑现。
+func envFallback(cfg config.Config) func(string) string {
+	return func(name string) string {
+		switch name {
+		case settings.KeyAmapRest:
+			return cfg.AmapKey
+		case settings.KeyAmapJS:
+			return cfg.AmapJSKey
+		case settings.KeyAmapJSSec:
+			return cfg.AmapJSSec
 		}
-	}()
-	log.Printf("async plan tasks enabled (mysql + stream plan_tasks)")
-	return plansRepo, taskQueue
+		return ""
+	}
+}
+
+// keyProviderValue 统一的取值入口:Provider 查询失败(DB 抖动)时回落 env ——
+// 配置读取失败不该把距离计算一起打挂,兜底要有兜底。
+func keyProviderValue(p *settings.Provider, name, envValue string) string {
+	if p == nil {
+		return envValue
+	}
+	v, err := p.Get(context.Background(), name)
+	if err != nil || v == "" {
+		return envValue
+	}
+	return v
 }

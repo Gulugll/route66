@@ -29,7 +29,9 @@ func NewWithAmap(c *amap.Client) *Service { return &Service{amap: c} }
 // HTTP 响应里。为什么不只用日志:日志在服务器上,用户看不到——用户拿到一个
 // 看起来正常的 45 km,却不知道那是直线估算,这是最坏的失败方式(错得悄无声息)。
 func (s *Service) DistanceMatrix(points []model.Point, mode model.Mode) ([][]float64, bool) {
-	if s.amap != nil {
+	// HasAPIKey 是"此刻"的判断:管理端还没配 key 时走直线(设计如此,不算降级),
+	// 配了之后同一进程的下一次请求就走真实路网 —— 动态 key 的热生效到这层自然成立
+	if s.amap != nil && s.amap.HasAPIKey() {
 		dists, err := s.amap.DistanceMatrix(points, mode)
 		if err == nil {
 			return dists, false

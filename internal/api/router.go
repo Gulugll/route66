@@ -12,11 +12,13 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"awesomeProject/internal/amap"
+	"awesomeProject/internal/auth"
 	"awesomeProject/internal/matrix"
 	"awesomeProject/internal/model"
 	"awesomeProject/internal/planner"
 	"awesomeProject/internal/queue"
 	"awesomeProject/internal/repo"
+	"awesomeProject/internal/settings"
 )
 
 // webDirName 前端静态文件目录(相对进程工作目录)
@@ -25,21 +27,57 @@ const webDirName = "web"
 // Server 持有 HTTP 层需要的依赖。所有业务逻辑都藏在别的包里,这里只做编排。
 // repo / queue 是 Phase 2 的异步任务依赖,可为 nil —— 没配 MYSQL_DSN 时
 // 异步路径不注册,同步的 /plan 照常工作(和 amap 可空是同一个思路)。
+// auth / settings 是登录与 key 中心化的依赖(Phase 3),可为 nil ——
+// nil 时 /auth/* 与 /config/public 不注册,游客/静态 key 模式照常。
 type Server struct {
-	matrix *matrix.Service
-	amap   *amap.Client  // 可空:没配 key 时 /search 不可用
-	repo   repo.TaskRepo // 可空:nil = 异步 /plans 不可用
-	queue  *queue.Queue  // 可空:同上
+	matrix   *matrix.Service
+	amap     *amap.Client       // 不再为 nil:动态 key 后客户端常驻,用 HasAPIKey 判断可用性
+	repo     repo.TaskRepo      // 可空:nil = 异步 /plans 不可用
+	queue    *queue.Queue       // 可空:同上
+	auth     *auth.Service      // 可空:nil = 不注册 /auth/*
+	settings *settings.Provider // 可空:nil = 不注册 /config/public
+	// envFallbacks 配置名 → env 兜底值。管理端回显"来源"时用:
+	// handler 不直接读环境变量(集中到 config.Load 是既有约定)
+	envFallbacks map[string]string
 }
+
+// Option 装配选项(FUNCTIONAL OPTIONS 模式):新增可选依赖时,
+// 老调用方(NewRouter 的既有测试)一行不用改。
+type Option func(*Server)
+
+// WithAuth 挂认证服务:注册 /auth/* 路由 + 全局 OptionalAuth。
+func WithAuth(a *auth.Service) Option { return func(s *Server) { s.auth = a } }
+
+// WithSettings 挂配置中心:注册 /config/public(JS key 下发)。
+func WithSettings(p *settings.Provider) Option { return func(s *Server) { s.settings = p } }
+
+// WithEnvFallbacks 提供配置名 → env 兜底值的映射(管理端回显来源用)。
+func WithEnvFallbacks(f map[string]string) Option {
+	return func(s *Server) { s.envFallbacks = f }
+}
+
+// amapReady 服务此刻能不能调高德。动态 key 后"有没有 key"是运行时状态,
+// 每个请求现查,绝不缓存到启动时 —— 那会把热生效变成"重启生效"。
+func (s *Server) amapReady() bool { return s.amap != nil && s.amap.HasAPIKey() }
 
 // NewRouter 组装路由。gin.Engine 就是"标准库 ServeMux + 中间件"的增强版,
 // gin.Default() 自带日志和 panic 恢复两个中间件。
 //
 // repo / queue 传 nil 表示"本进程没装配异步任务链路",此时不注册 /plans。
-func NewRouter(m *matrix.Service, am *amap.Client, r repo.TaskRepo, q *queue.Queue) *gin.Engine {
+// opts 是可选拼装(认证/配置中心),不传 = 老行为。
+func NewRouter(m *matrix.Service, am *amap.Client, r repo.TaskRepo, q *queue.Queue,
+	opts ...Option) *gin.Engine {
 	s := &Server{matrix: m, amap: am, repo: r, queue: q}
+	for _, opt := range opts {
+		opt(s)
+	}
 
 	router := gin.Default()
+	// 认证中间件放最外层:它只是"尽力认人",游客照常通过 ——
+	// 真正拦截的是各路由单独挂的 RequireAuth/RequireAdmin
+	if s.auth != nil {
+		router.Use(s.auth.OptionalAuth())
+	}
 	router.GET("/healthz", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")
 	})
@@ -51,6 +89,17 @@ func NewRouter(m *matrix.Service, am *amap.Client, r repo.TaskRepo, q *queue.Que
 	if s.repo != nil && s.queue != nil {
 		router.POST("/plans", s.createPlan)
 		router.GET("/plans/:id", s.getPlan)
+	}
+	// 登录/注册/当前用户。auth 是可选依赖:没装配就不注册(404 比 503 诚实,同一原则)
+	if s.auth != nil {
+		router.POST("/auth/register", s.register)
+		router.POST("/auth/login", s.login)
+		router.POST("/auth/logout", s.logout)
+		router.GET("/auth/me", s.me)
+	}
+	// JS key 下发:浏览器渲染地图用(JS key 天生公开)。settings 未装配 = 静态 key 模式,前端自己配
+	if s.settings != nil {
+		router.GET("/config/public", s.publicConfig)
 	}
 	// 托管前端页面:没命中上面 API 路由的请求,交给 web/ 目录的静态文件服务器。
 	// 用 NoRoute 而不是 Static("/") —— 因为 httprouter 不允许根路径 catch-all
@@ -92,7 +141,7 @@ func (s *Server) plan(c *gin.Context) {
 		return
 	}
 	// 混合出行没有 haversine 退路(每段方式不同,直线估算没法做),没 key 直接 503。
-	if s.amap == nil && len(req.Segments) > 0 {
+	if !s.amapReady() && len(req.Segments) > 0 {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "未配置 AMAP_KEY,混合出行不可用"})
 		return
 	}
@@ -127,7 +176,7 @@ func (s *Server) createPlan(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if s.amap == nil && len(req.Segments) > 0 {
+	if !s.amapReady() && len(req.Segments) > 0 {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "未配置 AMAP_KEY,混合出行不可用"})
 		return
 	}
@@ -188,7 +237,7 @@ func (s *Server) getPlan(c *gin.Context) {
 // search 是"地名 → 候选地点"的代理接口:前端传关键词,我们调高德搜索,
 // key 藏在后端(前端不碰第三方凭据),以后还能给搜索加缓存/限流。
 func (s *Server) search(c *gin.Context) {
-	if s.amap == nil {
+	if !s.amapReady() {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "未配置 AMAP_KEY,搜索不可用"})
 		return
 	}
@@ -231,7 +280,7 @@ func (s *Server) route(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if s.amap == nil {
+	if !s.amapReady() {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "未配置 AMAP_KEY,路线不可用"})
 		return
 	}

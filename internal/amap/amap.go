@@ -54,9 +54,12 @@ const (
 
 // Client 高德 Web 服务客户端。
 // cache 字段可空:传 nil 表示不缓存(比如测试或想关掉缓存时)。
+// key 通常静态传入;要"运行时换 key"(管理端热生效)就注入 keyFn,
+// 每次请求现取 —— 两者都给时 keyFn 优先。
 type Client struct {
 	key      string
-	restBase string // 高德 REST 根地址。测试里换成 httptest 假服务器
+	keyFn    func() string // 动态 key 来源(settings.Provider),可空
+	restBase string        // 高德 REST 根地址。测试里换成 httptest 假服务器
 	http     *http.Client
 	cache    cache.Cache
 }
@@ -86,6 +89,28 @@ func NewClientWithBase(key, restBase string, c cache.Cache) *Client {
 
 // url 拼出某个接口的完整地址。所有请求都走它,换地址只改一处。
 func (c *Client) url(path string) string { return c.restBase + path }
+
+// WithKeyFn 注入动态 key 来源。返回自身,方便链式装配。
+// keyFn 会在每次发请求时被调用 —— 实现方自己负责缓存(Provider 有),
+// 这里绝不缓存快照,否则"热生效"就成了一句空话。
+func (c *Client) WithKeyFn(fn func() string) *Client {
+	c.keyFn = fn
+	return c
+}
+
+// apiKey 当前请求该用的 key。这是所有请求取 key 的**唯一**出口 ——
+// 任何地方直接摸 c.key 都会让动态 key 失效,review 时盯紧这一条。
+func (c *Client) apiKey() string {
+	if c.keyFn != nil {
+		return c.keyFn()
+	}
+	return c.key
+}
+
+// HasAPIKey 当前是否有可用的 key。
+// 注意返回值是"此刻"的:管理端配了 key,下一个请求它就变 true ——
+// 调用方(路由 handler)据此决定 503 还是干活,不要在启动时缓存这个结果。
+func (c *Client) HasAPIKey() bool { return c.apiKey() != "" }
 
 // DistanceMatrix 返回 n×n 距离矩阵(公里),dists[i][j] = 点 i 到 j(按 mode 出行)。
 // 任何一步失败都返回 error——具体怎么降级由上层决定(matrix 会退回 haversine)。
@@ -291,7 +316,7 @@ func (c *Client) pairDistance(a, b model.Point, mode model.Mode) (float64, error
 	}
 
 	q := url.Values{}
-	q.Set("key", c.key)
+	q.Set("key", c.apiKey())
 	q.Set("origin", coord(a)) // v5/v3 单对接口用 origin/destination
 	q.Set("destination", coord(b))
 	log.Printf("[amap] %s %s -> %s", mode, coord(a), coord(b))
@@ -365,7 +390,7 @@ func (c *Client) pairDistance(a, b model.Point, mode model.Mode) (float64, error
 // 高德返回的 results 顺序与请求里的 origins 一一对应。
 func (c *Client) fetchColumn(origins []string, dest model.Point) ([]float64, error) {
 	q := url.Values{}
-	q.Set("key", c.key)
+	q.Set("key", c.apiKey())
 	q.Set("type", "1") // 1 = 驾车导航距离,按真实路网
 	q.Set("origins", strings.Join(origins, "|"))
 	q.Set("destination", coord(dest)) // 单终点——实测批量只认这种
@@ -442,7 +467,7 @@ func (c *Client) RoutePolyline(a, b model.Point, mode model.Mode) ([][2]float64,
 	}
 
 	q := url.Values{}
-	q.Set("key", c.key)
+	q.Set("key", c.apiKey())
 	q.Set("origin", coord(a))
 	q.Set("destination", coord(b))
 	log.Printf("[amap] route %s %s -> %s", mode, coord(a), coord(b))
@@ -537,7 +562,7 @@ func (c *Client) store(k string, km float64) {
 // 前端不直接调高德搜索,而是调我们的 /search——key 藏后端,还能统一加缓存/日志。
 func (c *Client) SearchPlaces(keyword, city string, limit int) ([]model.Place, error) {
 	q := url.Values{}
-	q.Set("key", c.key)
+	q.Set("key", c.apiKey())
 	q.Set("keywords", keyword)
 	q.Set("offset", strconv.Itoa(limit))
 	q.Set("page", "1")
