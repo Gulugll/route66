@@ -25,6 +25,18 @@ export function useAuth() {
       .finally(() => setReady(true))
   }, [])
 
+  // ── 全局过期兜底 ──
+  // API 保护启用后,业务接口在 session 过期时会返回 401;api.js 的 request()
+  // 对每个 401 派发 auth:expired 事件,这里统一接住 —— user 置空,
+  // App 的登录墙三分支自动接管。业务组件(搜索/规划/画线)完全不用知道这件事。
+  // 细节:登录页上的 /auth/me 401 也会触发一次,但那时 user 已经是 null,
+  // setUser(null) 幂等,不会造成额外的渲染抖动。
+  useEffect(() => {
+    const onExpired = () => setUser(null)
+    window.addEventListener('auth:expired', onExpired)
+    return () => window.removeEventListener('auth:expired', onExpired)
+  }, [])
+
   const login = useCallback(async (username, password) => {
     const data = await loginUser(username, password)
     setUser(data.user)

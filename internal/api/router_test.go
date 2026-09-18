@@ -86,7 +86,9 @@ func newTestRouter(t *testing.T, withAmap bool, failPaths ...string) *gin.Engine
 }
 
 // doJSON 发一个请求,返回状态码和原始 body。
-func doJSON(t *testing.T, r *gin.Engine, method, target, body string) (int, string) {
+// cookie 是可选的(变参):传了就带上 —— API 保护启用时,newAuthedTestRouter
+// 返回的合法 cookie 让业务请求正常通过;不传就是"游客请求"。
+func doJSON(t *testing.T, r *gin.Engine, method, target, body string, cookie ...string) (int, string) {
 	t.Helper()
 	var req *http.Request
 	if body == "" {
@@ -94,6 +96,9 @@ func doJSON(t *testing.T, r *gin.Engine, method, target, body string) (int, stri
 	} else {
 		req = httptest.NewRequest(method, target, strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if len(cookie) > 0 && cookie[0] != "" {
+		req.Header.Set("Cookie", cookie[0])
 	}
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

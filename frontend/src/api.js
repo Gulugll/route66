@@ -36,6 +36,10 @@ function withHint(msg) {
  * 统一的请求封装：负责 HTTP 细节 + 错误归一化。
  * 失败时抛 Error，message 就是可以直接给用户看的中文提示。
  *
+ * 401 有专门的通道：session 过期时（登录墙启用后业务接口会 401），
+ * 派发全局事件 auth:expired —— useAuth 监听它把 user 置空，
+ * App 的登录墙自动接管。业务组件不用各自处理"过期了怎么办"。
+ *
  * @param {string} path 相对路径，如 '/plan'
  * @param {RequestInit} [options]
  */
@@ -50,6 +54,14 @@ async function request(path, options) {
     data = await resp.json()
   } catch {
     data = null
+  }
+
+  if (resp.status === 401) {
+    // 只在"主界面已挂载"时派发才有意义:登录页上的 /auth/me 401 是正常探测,
+    // 那时 user 本来就是 null,派发了也无人响应(useAuth 里 user 已是 null,幂等)
+    window.dispatchEvent(new Event('auth:expired'))
+    const msg = data?.error || '登录已过期，请重新登录'
+    throw new Error(withHint(msg))
   }
 
   if (!resp.ok) {
