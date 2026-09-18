@@ -60,6 +60,16 @@ func WithEnvFallbacks(f map[string]string) Option {
 // 每个请求现查,绝不缓存到启动时 —— 那会把热生效变成"重启生效"。
 func (s *Server) amapReady() bool { return s.amap != nil && s.amap.HasAPIKey() }
 
+// protected 返回业务接口的注册面:auth 已装配时带 RequireAuth(API 级登录墙),
+// 未装配时退化为无保护 —— 降级语义的唯一开关点。
+// 为什么用 Group("/"):gin 的组会继承引擎上的 OptionalAuth(先认人再拦截),顺序正好。
+func (s *Server) protected(router *gin.Engine) gin.IRouter {
+	if s.auth != nil {
+		return router.Group("/", s.auth.RequireAuth())
+	}
+	return router.Group("/")
+}
+
 // NewRouter 组装路由。gin.Engine 就是"标准库 ServeMux + 中间件"的增强版,
 // gin.Default() 自带日志和 panic 恢复两个中间件。
 //
@@ -74,30 +84,39 @@ func NewRouter(m *matrix.Service, am *amap.Client, r repo.TaskRepo, q *queue.Que
 
 	router := gin.Default()
 	// 认证中间件放最外层:它只是"尽力认人",游客照常通过 ——
-	// 真正拦截的是各路由单独挂的 RequireAuth/RequireAdmin
+	// 真正拦截的是 protected() 组上的 RequireAuth
 	if s.auth != nil {
 		router.Use(s.auth.OptionalAuth())
 	}
 	router.GET("/healthz", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")
 	})
-	router.POST("/plan", s.plan)
-	router.GET("/search", s.search)
-	router.GET("/route", s.route)
-	// 异步任务接口只在装配了 MySQL + Stream 时注册:
+	// p = 业务接口的注册面。auth 已装配时它带着 RequireAuth ——
+	// 登录墙从"页面层"下沉到"API 层":curl 绕过前端也打不进业务接口。
+	// auth 未装配(没配 PG_DSN)时退化为无保护 —— 服务不能因为没配库就全锁死,
+	// 降级语义的开关收在这一个函数里,别处不出现第二个 if。
+	p := s.protected(router)
+	p.POST("/plan", s.plan)
+	p.GET("/search", s.search)
+	p.GET("/route", s.route)
+	// 异步任务接口只在装配了存储 + Stream 时注册:
 	// 一个 404 的接口和一个 503 的接口,前者更诚实 —— 功能没部署就不该"看起来存在"。
 	if s.repo != nil && s.queue != nil {
-		router.POST("/plans", s.createPlan)
-		router.GET("/plans/:id", s.getPlan)
+		p.POST("/plans", s.createPlan)
+		p.GET("/plans/:id", s.getPlan)
 	}
-	// 登录/注册/当前用户。auth 是可选依赖:没装配就不注册(404 比 503 诚实,同一原则)
+	// 登录/注册/当前用户,全部公开:
+	// register/login 是登录墙本体,锁了就没人能进来;
+	// me 未登录返回 401 是正常语义(前端靠它探测登录态);
+	// logout 幂等,未登录调用无害。
 	if s.auth != nil {
 		router.POST("/auth/register", s.register)
 		router.POST("/auth/login", s.login)
 		router.POST("/auth/logout", s.logout)
 		router.GET("/auth/me", s.me)
 	}
-	// JS key 下发:浏览器渲染地图用(JS key 天生公开)。settings 未装配 = 静态 key 模式,前端自己配
+	// JS key 下发:浏览器渲染地图用(JS key 天生公开,保护它不减少任何暴露面),
+	// 登录页自身也不需要它。settings 未装配 = 静态 key 模式,前端自己配
 	if s.settings != nil {
 		router.GET("/config/public", s.publicConfig)
 	}

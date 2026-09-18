@@ -44,7 +44,35 @@ else
 fi
 
 echo
-echo "== 1. 缓存清空（保证第一次请求真的打高德）=="
+echo "== 1. 认证探测与登录（API 保护启用时，业务请求必须带会话）=="
+# /auth/me 的状态码就是探测器:404 = auth 未装配(游客模式)，
+# 401 = 已装配且未登录(正是冒烟脚本的初始状态)，200 = 已装配且带有效会话。
+COOKIE="" # 空 = 不带凭证;curl -b 对不存在的文件静默忽略,两种模式统一写法
+me_code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/auth/me")
+if [ "$me_code" = "401" ] || [ "$me_code" = "200" ]; then
+  # 注册即登录(register 成功会发会话 cookie):账号带 $RANDOM,重跑不撞唯一约束
+  u="smoke_$RANDOM"
+  reg=$(curl -s -c "$TMP/cookie" -o /dev/null -w '%{http_code}' -X POST "$BASE/auth/register" \
+       -H 'Content-Type: application/json' -d "{\"username\":\"$u\",\"password\":\"smoke-pass-66\"}")
+  if [ "$reg" = "200" ]; then
+    COOKIE="$TMP/cookie"
+    ok "注册 $u 并取得会话（API 级登录墙已启用）"
+  else
+    bad "注册 → ${reg}（auth 已装配但注册失败,后续业务断言会全部 401）"
+  fi
+  # 保护本身也要测:没有凭证的业务请求必须被拦在门外 —— 这就是"API 级"与"页面级"的区别
+  c0=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/plan" \
+       -H 'Content-Type: application/json' -d "$PLAN_BODY")
+  [ "$c0" = "401" ] && ok "未带 cookie 的 /plan → 401（API 级登录墙生效）" \
+                   || bad "未带 cookie 的 /plan → ${c0}（期望 401,保护没挂上?）"
+elif [ "$me_code" = "404" ]; then
+  echo "  auth 未装配（PG_DSN 未配置），游客模式跑业务断言"
+else
+  bad "/auth/me 返回 ${me_code}（预期 401/200/404 之一）"
+fi
+
+echo
+echo "== 2. 缓存清空（保证第一次请求真的打高德）=="
 # 注意用 while read 而不是 xargs：macOS 的 BSD xargs 不支持 GNU 的 -r 选项
 $REDIS_CLI -p 6379 --scan --pattern 'dist:*' 2>/dev/null | while read -r k; do
   $REDIS_CLI -p 6379 DEL "$k" >/dev/null 2>&1
@@ -52,8 +80,8 @@ done
 echo "  已删除 dist:* 旧 key"
 
 echo
-echo "== 2. 首次 /plan（驾车，应打真实路网并写缓存）=="
-t1=$(curl -s -o "$TMP/plan1.json" -w '%{time_total}' -X POST "$BASE/plan" \
+echo "== 3. 首次 /plan（驾车，应打真实路网并写缓存）=="
+t1=$(curl -s -b "$COOKIE" -o "$TMP/plan1.json" -w '%{time_total}' -X POST "$BASE/plan" \
      -H 'Content-Type: application/json' -d "$PLAN_BODY")
 km1=$(grep -o '"total_km":[0-9.]*' "$TMP/plan1.json" | cut -d: -f2)
 echo "  原始响应: $(cat "$TMP/plan1.json")"
@@ -70,7 +98,7 @@ else
 fi
 
 echo
-echo "== 3. 缓存是否写入 =="
+echo "== 4. 缓存是否写入 =="
 keys=$($REDIS_CLI -p 6379 --scan --pattern 'dist:*' 2>/dev/null | wc -l | tr -d ' ')
 [ "$keys" -ge 6 ] && ok "dist:* key 数 = ${keys}（3 点应有 6 个有向对）" \
                   || bad "dist:* key 数 = ${keys}（少于 6，检查缓存写入）"
@@ -78,8 +106,8 @@ ttl=$($REDIS_CLI -p 6379 TTL "$($REDIS_CLI -p 6379 --scan --pattern 'dist:*' 2>/
 echo "  抽样 TTL = ${ttl}s（应接近 86400）"
 
 echo
-echo "== 4. 二次 /plan（同参数，应零高德请求）=="
-t2=$(curl -s -o "$TMP/plan2.json" -w '%{time_total}' -X POST "$BASE/plan" \
+echo "== 5. 二次 /plan（同参数，应零高德请求）=="
+t2=$(curl -s -b "$COOKIE" -o "$TMP/plan2.json" -w '%{time_total}' -X POST "$BASE/plan" \
      -H 'Content-Type: application/json' -d "$PLAN_BODY")
 echo "  耗时: ${t2}s"
 awk -v a="$t1" -v b="$t2" 'BEGIN { exit !(b+0 <= a+0) }' \
@@ -87,25 +115,25 @@ awk -v a="$t1" -v b="$t2" 'BEGIN { exit !(b+0 <= a+0) }' \
   || bad "二次(${t2}s) 比首次(${t1}s) 慢 —— 缓存可能没生效"
 
 echo
-echo "== 5. /search（后端代理高德搜索）=="
-curl -s -o "$TMP/search.json" "$BASE/search?q=%E5%B9%BF%E5%B7%9E%E5%A1%94"
+echo "== 6. /search（后端代理高德搜索）=="
+curl -s -b "$COOKIE" -o "$TMP/search.json" "$BASE/search?q=%E5%B9%BF%E5%B7%9E%E5%A1%94"
 n=$(grep -o '"name":' "$TMP/search.json" | wc -l | tr -d ' ')
 [ "$n" -ge 1 ] && ok "搜索「广州塔」返回 $n 条候选" || bad "搜索返回 0 条：$(cat "$TMP/search.json")"
 
 echo
-echo "== 6. /route（真实路网轨迹，前端画线用）=="
-curl -s -o "$TMP/route.json" "$BASE/route?origin=113.3245,23.1066&dest=113.2956,23.1794&mode=driving"
+echo "== 7. /route（真实路网轨迹，前端画线用）=="
+curl -s -b "$COOKIE" -o "$TMP/route.json" "$BASE/route?origin=113.3245,23.1066&dest=113.2956,23.1794&mode=driving"
 pts=$(grep -o '\[' "$TMP/route.json" | wc -l | tr -d ' ')
 [ "$pts" -ge 20 ] && ok "驾车轨迹点数 = ${pts}（远超 2 点，是真轨迹不是直线）" \
                   || bad "轨迹点数 = ${pts}（疑似空轨迹，前端会降级画直线）"
 
 echo
-echo "== 7. 混合出行（每段不同方式）=="
+echo "== 8. 混合出行（每段不同方式）=="
 for mode in walking transit; do
   body='{"origin":{"name":"广州塔","lat":23.1066,"lng":113.3245},
   "destinations":[{"name":"白云山","lat":23.1794,"lng":113.2956}],
   "manual":true,"segments":["'"$mode"'"]}'
-  out=$(curl -s -X POST "$BASE/plan" -H 'Content-Type: application/json' -d "$body")
+  out=$(curl -s -b "$COOKIE" -X POST "$BASE/plan" -H 'Content-Type: application/json' -d "$body")
   km=$(echo "$out" | grep -o '"total_km":[0-9.]*' | cut -d: -f2)
   if [ -n "$km" ]; then
     if echo "$out" | grep -q '"is_degraded":true'; then
@@ -119,11 +147,11 @@ for mode in walking transit; do
 done
 
 echo
-echo "== 8. 参数校验（防御性编程是否真的拦得住）=="
-c1=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/plan" -H 'Content-Type: application/json' \
+echo "== 9. 参数校验（防御性编程是否真的拦得住）=="
+c1=$(curl -s -b "$COOKIE" -o /dev/null -w '%{http_code}' -X POST "$BASE/plan" -H 'Content-Type: application/json' \
      -d '{"origin":{"name":"a","lat":999,"lng":113},"destinations":[{"name":"b","lat":23,"lng":113}]}')
 [ "$c1" = "400" ] && ok "非法坐标 → 400" || bad "非法坐标 → ${c1}（期望 400）"
-c2=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/plan" -H 'Content-Type: application/json' \
+c2=$(curl -s -b "$COOKIE" -o /dev/null -w '%{http_code}' -X POST "$BASE/plan" -H 'Content-Type: application/json' \
      -d '{"origin":{"name":"a","lat":23,"lng":113},"destinations":[{"name":"b","lat":23,"lng":113},{"name":"c","lat":23,"lng":113}],"segments":["walking"]}')
 [ "$c2" = "400" ] && ok "segments 长度不符 → 400" || bad "segments 长度不符 → ${c2}（期望 400）"
 
@@ -133,7 +161,7 @@ c2=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/plan" -H 'Content-Typ
 adminUp=$(curl -s -o /dev/null -w '%{http_code}' "$ADMIN_BASE/admin/healthz" || true)
 if [ "$adminUp" = "200" ]; then
   echo
-  echo "== 9. 登录系统与管理台（可选段）=="
+  echo "== 10. 登录系统与管理台 =="
   u="smoke_$RANDOM"
   c3=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/auth/register" -H 'Content-Type: application/json' \
        -d "{\"username\":\"$u\",\"password\":\"smoke-pass-66\"}")
@@ -147,7 +175,7 @@ if [ "$adminUp" = "200" ]; then
   [ "$c6" = "401" ] && ok "未登录管理 API → 401" || bad "管理 API → ${c6}（期望 401）"
 else
   echo
-  echo "== 9. 登录系统与管理台：跳过（7801 管理端未启用，属正常配置）=="
+  echo "== 10. 登录系统与管理台：跳过（7801 管理端未启用，属正常配置）=="
 fi
 
 echo
