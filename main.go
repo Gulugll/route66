@@ -107,9 +107,12 @@ func main() {
 
 	// —— 用户端引擎(:7800)——
 	envFallbacks := map[string]string{
-		settings.KeyAmapRest:  cfg.AmapKey,
-		settings.KeyAmapJS:    cfg.AmapJSKey,
-		settings.KeyAmapJSSec: cfg.AmapJSSec,
+		settings.KeyAmapRest:   cfg.AmapKey,
+		settings.KeyAmapJS:     cfg.AmapJSKey,
+		settings.KeyAmapJSSec:  cfg.AmapJSSec,
+		settings.KeyLLMBaseURL: cfg.LLMBaseURL,
+		settings.KeyLLMAPIKey:  cfg.LLMAPIKey,
+		settings.KeyLLMModel:   cfg.LLMModel,
 	}
 	opts := []api.Option{
 		api.WithSettings(keyProvider),
@@ -152,6 +155,12 @@ func envFallback(cfg config.Config) func(string) string {
 			return cfg.AmapJSKey
 		case settings.KeyAmapJSSec:
 			return cfg.AmapJSSec
+		case settings.KeyLLMBaseURL:
+			return cfg.LLMBaseURL
+		case settings.KeyLLMAPIKey:
+			return cfg.LLMAPIKey
+		case settings.KeyLLMModel:
+			return cfg.LLMModel
 		}
 		return ""
 	}

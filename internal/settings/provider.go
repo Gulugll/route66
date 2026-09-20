@@ -20,12 +20,16 @@ import (
 	"gorm.io/gorm"
 )
 
-// 合法配置名。管理端 API 只接受这三个名字,
+// 合法配置名。管理端 API 只接受这些名字,
 // 白名单同时挡住了"往 settings 表塞任意键"的滥用。
 const (
 	KeyAmapRest  = "amap_rest_key" // 高德 Web服务 key(后端 REST 用,绝不下发前端)
 	KeyAmapJS    = "amap_js_key"   // 高德 JS API key(浏览器渲染地图用,下发不泄密)
 	KeyAmapJSSec = "amap_js_sec"   // JS key 的安全密钥(同样要下发浏览器)
+
+	KeyLLMBaseURL = "llm_base_url" // OpenAI 兼容服务地址(如 https://api.deepseek.com)
+	KeyLLMAPIKey  = "llm_api_key"  // LLM 服务密钥
+	KeyLLMModel   = "llm_model"    // 模型名(如 deepseek-chat)
 )
 
 // ErrUnknownKey 管理端试图读写白名单之外的配置名。
@@ -174,7 +178,8 @@ func (p *Provider) HasDBValue(ctx context.Context, name string) (string, bool, e
 
 func isKnownKey(name string) bool {
 	switch name {
-	case KeyAmapRest, KeyAmapJS, KeyAmapJSSec:
+	case KeyAmapRest, KeyAmapJS, KeyAmapJSSec,
+		KeyLLMBaseURL, KeyLLMAPIKey, KeyLLMModel:
 		return true
 	}
 	return false

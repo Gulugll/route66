@@ -85,7 +85,7 @@ export function searchPlaces(q, city) {
  * 后端是"看到 segments 非空就走混合出行分支"的（见 router.go 的 len(req.Segments) > 0），
  * 多发一个空数组都可能改变它走哪条路径。接口约定要精确，不能"多传点也无所谓"。
  */
-export function planRoute({ points, manual }) {
+export function planRoute({ points, manual, mode = 'driving' }) {
   const [origin, ...destinations] = points
   const body = {
     origin,
@@ -95,6 +95,10 @@ export function planRoute({ points, manual }) {
   if (manual) {
     // 每一段的出行方式。长度必然是点数-1，后端会校验这一点。
     body.segments = points.slice(0, -1).map((p) => p.legMode)
+  } else {
+    // 自动模式没有 segments(否则后端会走混合出行分支),
+    // 全局方式显式传 mode,不再依赖后端的默认值
+    body.mode = mode
   }
   return request('/plan', {
     method: 'POST',
@@ -146,6 +150,57 @@ export function logoutUser() {
 export async function fetchMe() {
   const data = await request('/auth/me')
   return data.user
+}
+
+/**
+ * 与 RouteBot 对话（NDJSON 流式）。
+ *
+ * 每行一个 JSON 事件：{type:'step', step} → {type:'done', answer} 或 {type:'error', error}。
+ * 用 POST + ReadableStream 而不是 EventSource：EventSource 不支持 POST，
+ * 而对话请求必须带 body（多轮历史）。逐行 parse 的成本远低于引入 SSE 封装库。
+ *
+ * @param {{role:'user'|'assistant', content:string}[]} messages 全量对话历史
+ * @param {{signal?:AbortSignal, onEvent?:(evt:object)=>void}} [options]
+ */
+export async function streamAgent(messages, { signal, onEvent } = {}) {
+  const resp = await fetch('/agent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages }),
+    signal,
+  })
+
+  if (!resp.ok) {
+    let data = null
+    try {
+      data = await resp.json()
+    } catch {
+      data = null
+    }
+    if (resp.status === 401) window.dispatchEvent(new Event('auth:expired'))
+    throw new Error(data?.error || `请求失败（HTTP ${resp.status}）`)
+  }
+
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let idx
+    // 按行切分；残包留在 buffer 里等下一块 —— NDJSON 的行边界是唯一的可靠分界
+    while ((idx = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, idx).trim()
+      buffer = buffer.slice(idx + 1)
+      if (!line) continue
+      try {
+        onEvent?.(JSON.parse(line))
+      } catch {
+        // 单行解析失败跳过，不断流 —— 服务端保证每行都是完整 JSON，这里是防御
+      }
+    }
+  }
 }
 
 /**

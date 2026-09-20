@@ -75,7 +75,7 @@ func main() {
 	defer cancel()
 
 	fmt.Printf("问题: %s\n", question)
-	answer, _, err := a.Run(ctx, question)
+	answer, _, err := a.Run(ctx, []agent.Message{agent.NewUserMsg(question)})
 	if err != nil {
 		fmt.Println("\n失败:", err)
 		os.Exit(1)

@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Route66 主工作台 · 布局 v0</title>
+<style>
+/* ── 设计 tokens：全部继承 frontend/src/styles/tokens.css，新增 2 个 agent 中性变量 ── */
+:root {
+  --bg-page: #F5F5F7;
+  --bg-surface: #FFFFFF;
+  --bg-subtle: #FAFAFC;
+  --bg-sunken: #F0F0F2;
+  --border: #E0E0E0;
+  --border-soft: #EFEFF1;
+  --ink: #1D1D1F;
+  --text-secondary: #7A7A7A;
+  --text-tertiary: #A1A1A6;
+  --driving: #0066CC;
+  --driving-soft: #E8F1FB;
+  --danger: #D93025;
+  --danger-soft: #FDECEA;
+  --warning-soft: #FFF8E6;
+  --warning-border: #F2D18A;
+  --warning-text: #8A5A00;
+  --radius-input: 9px;
+  --radius-card: 12px;
+  --radius-chip: 10px;
+  --gap-xs: 6px; --gap-sm: 8px; --gap-md: 12px; --gap-lg: 20px;
+  --topbar-height: 56px;
+  --agent-width: 376px;
+  --plan-strip-min: 148px;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Noto Sans SC', system-ui, sans-serif;
+  --font-num: 'Inter', 'SF Mono', ui-monospace, monospace;
+  --shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.10);
+  /* agent 面板识别色（v0 默认紫，Tweaks 可切青） */
+  --accent: #6E56CF;
+  --accent-soft: #EFEEFB;
+}
+body.accent-teal { --accent: #0F766E; --accent-soft: #E6F4F2; }
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font-ui);
+  color: var(--ink);
+  background: var(--bg-page);
+  overflow: hidden;
+  font-size: 14px;
+}
+button { font-family: inherit; cursor: pointer; border: none; background: none; }
+input, select { font-family: inherit; outline: none; }
+
+/* ── 骨架：TopBar + 主区 Grid（对齐线框：上排 地图|Agent，下排 规划带） ── */
+.app { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+.topbar {
+  height: var(--topbar-height); flex: none;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 20px; background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-soft);
+}
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; }
+.brand-dot { width: 10px; height: 10px; border-radius: 3px; background: var(--ink); }
+.brand-env { font-size: 11px; color: var(--text-tertiary); font-weight: 400; }
+.user-chip { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); }
+.avatar { width: 26px; height: 26px; border-radius: 50%; background: var(--bg-sunken);
+  display: grid; place-items: center; font-size: 12px; color: var(--text-secondary); }
+
+.main {
+  flex: 1; min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr var(--agent-width);
+  grid-template-rows: 1fr auto;
+  grid-template-areas: "map agent" "plan plan";
+}
+body.agent-collapsed .main {
+  grid-template-columns: 1fr 0;
+  grid-template-areas: "map agent" "plan plan";
+}
+body.agent-collapsed .agent-pane { display: none; }
+
+/* ── 左上：地图区（运行时为高德 JS API 容器，此处为静态占位示意） ── */
+.map-pane { grid-area: map; position: relative; min-width: 0; background: #E9E9EE; overflow: hidden; }
+.map-grid {
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(29,29,31,.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(29,29,31,.045) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
+.map-road { position: absolute; background: #DCDCE3; }
+.map-road.h1 { left: 0; right: 0; top: 38%; height: 10px; }
+.map-road.h2 { left: 0; right: 0; top: 72%; height: 6px; }
+.map-road.v1 { top: 0; bottom: 0; left: 30%; width: 8px; }
+.map-road.v2 { top: 0; bottom: 0; left: 68%; width: 6px; }
+.map-note {
+  position: absolute; top: 12px; left: 12px; z-index: 3;
+  font-size: 11px; color: var(--text-tertiary);
+  background: rgba(255,255,255,.85); backdrop-filter: blur(4px);
+  padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border-soft);
+}
+.map-route { position: absolute; inset: 0; z-index: 2; }
+.map-marker { position: absolute; z-index: 3; transform: translate(-50%, -100%); text-align: center; }
+.map-marker .pin { width: 14px; height: 14px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); margin: 0 auto; background: var(--ink); border: 2.5px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
+.map-marker.origin .pin { background: var(--driving); }
+.map-marker .lbl { margin-top: 3px; font-size: 11px; color: var(--ink); background: rgba(255,255,255,.92); padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border-soft); white-space: nowrap; }
+.map-legend {
+  position: absolute; left: 12px; bottom: 12px; z-index: 3;
+  display: flex; gap: 12px; align-items: center;
+  background: rgba(255,255,255,.92); backdrop-filter: blur(4px);
+  border: 1px solid var(--border-soft); border-radius: var(--radius-card);
+  padding: 7px 12px; font-size: 12px; color: var(--text-secondary);
+}
+.map-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+.map-zoom {
+  position: absolute; right: 12px; bottom: 12px; z-index: 3;
+  display: flex; flex-direction: column; background: var(--bg-surface);
+  border: 1px solid var(--border-soft); border-radius: 10px; overflow: hidden;
+}
+.map-zoom button { width: 32px; height: 30px; font-size: 15px; color: var(--text-secondary); }
+.map-zoom button:first-child { border-bottom: 1px solid var(--border-soft); }
+.agent-fab {
+  position: absolute; right: 12px; top: 12px; z-index: 3; display: none;
+  align-items: center; gap: 7px; padding: 8px 14px;
+  background: var(--ink); color: #fff; border-radius: 999px; font-size: 13px;
+  box-shadow: var(--shadow-pop);
+}
+body.agent-collapsed .agent-fab { display: inline-flex; }
+
+/* ── 右：Agent 面板 ── */
+.agent-pane {
+  grid-area: agent; min-width: 0;
+  display: flex; flex-direction: column;
+  background: var(--bg-surface); border-left: 1px solid var(--border-soft);
+}
+.agent-head {
+  flex: none; display: flex; align-items: center; justify-content: space-between;
+  padding: 13px 16px; border-bottom: 1px solid var(--border-soft);
+}
+.agent-title { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 14px; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.status-dot.off { background: var(--text-tertiary); }
+.agent-sub { font-size: 11px; color: var(--text-tertiary); font-weight: 400; margin-left: 2px; }
+.agent-collapse { font-size: 12px; color: var(--text-tertiary); padding: 4px 8px; border-radius: 8px; }
+.agent-collapse:hover { background: var(--bg-sunken); color: var(--text-secondary); }
+
+.agent-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.msg { max-width: 86%; font-size: 13.5px; line-height: 1.65; text-wrap: pretty; }
+.msg-user { align-self: flex-end; background: var(--ink); color: #fff; padding: 9px 13px; border-radius: 14px 14px 4px 14px; }
+.msg-bot { align-self: flex-start; background: var(--bg-subtle); border: 1px solid var(--border-soft); padding: 9px 13px; border-radius: 14px 14px 14px 4px; }
+.msg-bot .km { font-family: var(--font-num); font-weight: 600; }
+.caret { display: inline-block; width: 2px; height: 14px; background: var(--accent); vertical-align: -2px; margin-left: 2px; animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .caret { animation: none; } }
+
+/* 工具调用步骤链 */
+.tool-steps { align-self: flex-start; width: 86%; border: 1px solid var(--border-soft); border-radius: var(--radius-card); overflow: hidden; }
+.tool-steps-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; font-size: 12px; color: var(--text-secondary); background: var(--bg-subtle); }
+.tool-steps-head .n { font-family: var(--font-num); color: var(--accent); font-weight: 600; }
+.tool-step { display: flex; align-items: center; gap: 9px; padding: 8px 12px; font-size: 12px; border-top: 1px solid var(--border-soft); }
+.tool-step .name { font-family: var(--font-num); font-size: 11.5px; color: var(--ink); background: var(--bg-sunken); padding: 2px 8px; border-radius: 6px; }
+.tool-step .arg { color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.tool-step .ok { color: var(--accent); font-size: 11px; }
+
+/* 空态建议 */
+.suggest { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+.suggest-label { font-size: 11px; color: var(--text-tertiary); }
+.suggest button { text-align: left; font-size: 13px; color: var(--text-secondary); background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-chip); padding: 9px 12px; transition: border-color .15s, color .15s; }
+.suggest button:hover { border-color: var(--ink); color: var(--ink); }
+
+.agent-input { flex: none; border-top: 1px solid var(--border-soft); padding: 12px 14px; display: flex; gap: 9px; background: var(--bg-surface); }
+.agent-input input { flex: 1; border: 1px solid var(--border); border-radius: var(--radius-input); padding: 9px 12px; font-size: 13.5px; background: var(--bg-subtle); }
+.agent-input input:focus { border-color: var(--accent); background: #fff; }
+.send { padding: 0 16px; border-radius: var(--radius-input); background: var(--accent); color: #fff; font-size: 13.5px; }
+.send:hover { filter: brightness(1.06); }
+.agent-hint { font-size: 11px; color: var(--text-tertiary); margin-top: 7px; }
+
+/* ── 下：规划带（横向工具条） ── */
+.plan-strip {
+  grid-area: plan; min-height: var(--plan-strip-min);
+  background: var(--bg-surface); border-top: 1px solid var(--border-soft);
+  display: flex; align-items: stretch; padding: 13px 20px; gap: 0; overflow-x: auto;
+}
+.plane-sec { display: flex; flex-direction: column; gap: 9px; padding: 0 20px; min-width: 0; }
+.plane-sec:first-child { padding-left: 0; }
+.plane-sec + .plane-sec { border-left: 1px solid var(--border-soft); }
+.sec-label { font-size: 11px; color: var(--text-tertiary); display: flex; gap: 6px; align-items: baseline; }
+.sec-label b { color: var(--text-secondary); font-weight: 500; }
+
+.add-row { display: flex; gap: 7px; }
+.add-row input { border: 1px solid var(--border); border-radius: var(--radius-input); padding: 8px 11px; font-size: 13px; background: var(--bg-subtle); }
+.add-row input:focus { border-color: var(--ink); background: #fff; }
+.add-row .q { width: 190px; }
+.add-row .city { width: 74px; }
+.btn-ghost { border: 1px solid var(--border); border-radius: var(--radius-input); padding: 8px 14px; font-size: 13px; color: var(--ink); background: var(--bg-surface); }
+.btn-ghost:hover { border-color: var(--ink); }
+
+.chips { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: 520px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius-chip); padding: 6px 9px 6px 7px; font-size: 13px;
+}
+.chip .handle { color: var(--text-tertiary); font-size: 11px; letter-spacing: -1px; cursor: grab; }
+.chip .badge { font-size: 10.5px; padding: 1.5px 7px; border-radius: 999px; background: var(--bg-sunken); color: var(--text-secondary); }
+.chip.origin .badge { background: var(--driving-soft); color: var(--driving); }
+.chip .x { color: var(--text-tertiary); font-size: 12px; padding: 0 2px; }
+.chip .x:hover { color: var(--danger); }
+.chip-add { border-style: dashed; color: var(--text-tertiary); padding: 6px 12px; font-size: 12.5px; }
+.chip-add:hover { color: var(--ink); border-color: var(--ink); }
+
+.seg { display: inline-flex; background: var(--bg-sunken); border-radius: var(--radius-input); padding: 3px; }
+.seg button { font-size: 12.5px; padding: 6px 13px; border-radius: 7px; color: var(--text-secondary); }
+.seg button.on { background: var(--bg-surface); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.mode-row { display: flex; gap: 7px; align-items: center; }
+.mode-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; color: var(--text-secondary); }
+.mode-pill i { width: 12px; height: 3px; border-radius: 2px; }
+.mode-pill.on { border-color: var(--ink); color: var(--ink); }
+
+.action-sec { justify-content: space-between; min-width: 168px; }
+.btn-primary { background: var(--ink); color: #fff; border-radius: var(--radius-input); padding: 10px 22px; font-size: 14px; font-weight: 500; }
+.btn-primary:hover { filter: brightness(1.12); }
+.btn-text { font-size: 12px; color: var(--text-tertiary); }
+.btn-text:hover { color: var(--text-secondary); }
+
+.result-sec { flex: 1; min-width: 260px; justify-content: center; }
+.result-line { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.result-order { font-size: 13.5px; }
+.result-order .arrow { color: var(--text-tertiary); margin: 0 6px; }
+.result-km { font-family: var(--font-num); font-size: 20px; font-weight: 600; }
+.result-km small { font-size: 12px; color: var(--text-tertiary); font-weight: 400; margin-left: 2px; }
+.result-empty { color: var(--text-tertiary); font-size: 13px; }
+.warn-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--warning-text); background: var(--warning-soft); border: 1px solid var(--warning-border); border-radius: 999px; padding: 4px 11px; }
+
+/* ── Tweaks 面板 ── */
+.tweaks-btn { position: fixed; right: 16px; bottom: 16px; z-index: 50; width: 40px; height: 40px; border-radius: 50%; background: var(--ink); color: #fff; font-size: 12px; box-shadow: var(--shadow-pop); }
+.tweaks { position: fixed; right: 16px; bottom: 64px; z-index: 50; width: 216px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-card); box-shadow: var(--shadow-pop); padding: 13px 14px; display: none; flex-direction: column; gap: 11px; }
+.tweaks.open { display: flex; }
+.tweaks h4 { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.tweaks label { display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; color: var(--text-secondary); }
+.tweaks select { font-size: 12px; border: 1px solid var(--border); border-radius: 7px; padding: 3px 6px; background: var(--bg-surface); }
+.tweaks .switch { position: relative; width: 34px; height: 19px; border-radius: 999px; background: var(--border); transition: background .15s; }
+.tweaks .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; transition: left .15s; }
+.tweaks .switch.on { background: var(--accent); }
+.tweaks .switch.on::after { left: 17px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand"><span class="brand-dot"></span>Route66 <span class="brand-env">/ 多点路线规划</span></div>
+    <div class="user-chip"><span class="avatar">寿</span>shou <span style="color:var(--text-tertiary);font-size:12px">退出</span></div>
+  </header>
+
+  <div class="main">
+
+    <!-- 左上：地图（运行时为高德 JS API 容器） -->
+    <section class="map-pane" aria-label="地图">
+      <div class="map-grid"></div>
+      <div class="map-road h1"></div><div class="map-road h2"></div>
+      <div class="map-road v1"></div><div class="map-road v2"></div>
+      <div class="map-note">地图区域 · v0 占位示意（运行时为高德 JS API）</div>
+
+      <svg class="map-route" viewBox="0 0 800 500" preserveAspectRatio="none">
+        <polyline points="210,300 340,225 555,352" fill="none" stroke="#0066CC" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+      </svg>
+      <div class="map-marker origin" style="left:26.2%; top:63%"><span class="pin"></span><span class="lbl">天安门 · 起点</span></div>
+      <div class="map-marker" style="left:42.5%; top:48%"><span class="pin"></span><span class="lbl">故宫</span></div>
+      <div class="map-marker" style="left:69.4%; top:73%"><span class="pin"></span><span class="lbl">天坛</span></div>
+
+      <div class="map-legend">
+        <span><i style="background:var(--driving)"></i>驾车</span>
+        <span><i style="background:#34A853"></i>步行</span>
+        <span><i style="background:#E08600"></i>公交</span>
+      </div>
+      <div class="map-zoom"><button>+</button><button>−</button></div>
+      <button class="agent-fab">◀ 打开 RouteBot</button>
+    </section>
+
+    <!-- 右：Agent 面板 -->
+    <aside class="agent-pane" aria-label="RouteBot 智能助手">
+      <div class="agent-head">
+        <div class="agent-title">
+          <span class="status-dot"></span>RouteBot
+          <span class="agent-sub">路线智能助手</span>
+        </div>
+        <button class="agent-collapse">收起 ▶</button>
+      </div>
+
+      <div class="agent-body">
+        <div class="msg msg-user">帮我规划一条从天安门出发，途经故宫再到天坛的驾车路线</div>
+
+        <div class="tool-steps">
+          <div class="tool-steps-head"><span>工具调用 · 已完成</span><span class="n">2 步</span></div>
+          <div class="tool-step"><span class="name">search_place</span><span class="arg">keyword=天安门 / 故宫 / 天坛 · city=北京</span><span class="ok">✓</span></div>
+          <div class="tool-step"><span class="name">plan_route</span><span class="arg">mode=driving · 自动优化顺序</span><span class="ok">✓</span></div>
+        </div>
+
+        <div class="msg msg-bot">推荐按 <b>天安门 → 故宫 → 天坛</b> 的顺序游览，全程驾车约 <span class="km">4.7 km</span>。故宫至天坛段如改乘公交，可在下方规划带切换出行方式重新计算。</div>
+      </div>
+
+      <div class="agent-input">
+        <input type="text" placeholder="向 RouteBot 描述你的出行计划…" value="">
+        <button class="send">发送</button>
+      </div>
+      <div style="padding: 0 14px 12px;"><div class="agent-hint">回答基于工具返回的真实数据；路线结果会同步到底部规划带</div></div>
+    </aside>
+
+    <!-- 下：规划带（横向工具条） -->
+    <section class="plan-strip" aria-label="路径规划">
+
+      <div class="plane-sec">
+        <div class="sec-label"><b>添加地点</b>搜索或输入坐标</div>
+        <div class="add-row">
+          <input class="q" type="text" placeholder="搜索地名，如 故宫">
+          <input class="city" type="text" placeholder="城市" value="北京">
+          <button class="btn-ghost">添加</button>
+        </div>
+      </div>
+
+      <div class="plane-sec">
+        <div class="sec-label"><b>地点顺序</b>拖动排序 · 共 3 站</div>
+        <div class="chips">
+          <span class="chip origin"><span class="handle">≡</span><span class="badge">起点</span>天安门<span class="x">✕</span></span>
+          <span class="chip"><span class="handle">≡</span><span class="badge">第1站</span>故宫<span class="x">✕</span></span>
+          <span class="chip"><span class="handle">≡</span><span class="badge">第2站</span>天坛<span class="x">✕</span></span>
+          <button class="chip chip-add">＋ 添加</button>
+        </div>
+      </div>
+
+      <div class="plane-sec">
+        <div class="sec-label"><b>规划方式</b></div>
+        <div class="mode-row">
+          <span class="seg"><button class="on">自动优化</button><button>手动顺序</button></span>
+          <span class="mode-pill on"><i style="background:var(--driving)"></i>驾车</span>
+          <span class="mode-pill"><i style="background:#34A853"></i>步行</span>
+          <span class="mode-pill"><i style="background:#E08600"></i>公交</span>
+        </div>
+      </div>
+
+      <div class="plane-sec action-sec">
+        <div class="sec-label"><b>执行</b></div>
+        <button class="btn-primary">开始规划</button>
+        <button class="btn-text">清空全部地点</button>
+      </div>
+
+      <div class="plane-sec result-sec" id="result-sec">
+        <div class="sec-label"><b>规划结果</b></div>
+        <div class="result-line">
+          <span class="result-order">天安门<span class="arrow">→</span>故宫<span class="arrow">→</span>天坛</span>
+          <span class="result-km">4.7<small>km</small></span>
+          <span class="warn-chip" id="warn-chip" style="display:none">⚠ 天坛→故宫 段为直线估算</span>
+        </div>
+      </div>
+
+    </section>
+  </div>
+</div>
+
+<button class="tweaks-btn" id="tweaks-btn">T</button>
+<div class="tweaks" id="tweaks">
+  <h4>Tweaks</h4>
+  <label>Agent 强调色
+    <select id="tk-accent"><option value="violet">紫（默认）</option><option value="teal">青</option></select>
+  </label>
+  <label>Agent 面板<span class="switch on" id="tk-agent"></span></label>
+  <label>显示规划结果<span class="switch on" id="tk-result"></span></label>
+  <label>降级警告态<span class="switch" id="tk-degraded"></span></label>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+$('#tweaks-btn').onclick = () => $('#tweaks').classList.toggle('open');
+$('#tk-accent').onchange = (e) => {
+  document.body.classList.toggle('accent-teal', e.target.value === 'teal');
+};
+$('#tk-agent').onclick = (e) => {
+  e.target.classList.toggle('on');
+  document.body.classList.toggle('agent-collapsed');
+};
+$('#tk-result').onclick = (e) => {
+  e.target.classList.toggle('on');
+  $('#result-sec').style.visibility = e.target.classList.contains('on') ? 'visible' : 'hidden';
+};
+$('#tk-degraded').onclick = (e) => {
+  e.target.classList.toggle('on');
+  $('#warn-chip').style.display = e.target.classList.contains('on') ? 'inline-flex' : 'none';
+};
+</script>
+</body>
+</html>

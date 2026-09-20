@@ -18,7 +18,7 @@ import { useEffect, useRef } from 'react'
 import { MODE_COLORS, MODE_ICONS, MODE_LABELS, MODES } from '../theme.js'
 import { Icon } from './icons.jsx'
 
-export function MapView({ amap, points, segments, onAddFromMap }) {
+export function MapView({ amap, points, segments, onAddFromMap, fab }) {
   const { containerRef, map, status, error, zoomIn, zoomOut } = amap
 
   // 存"地图上的标记对象"。用 ref 而不是 state:修改不需要触发重渲染,
@@ -101,6 +101,7 @@ export function MapView({ amap, points, segments, onAddFromMap }) {
           因为 React 需要一个"稳定的、始终存在的" DOM 节点挂地图。
           如果等 key 有了再渲染容器，useAmap 里的 containerRef.current 就是 null 了。 */}
       <div className="map-canvas" ref={containerRef} />
+      {fab}
 
       {status === 'no-key' && (
         <div className="map-empty">
