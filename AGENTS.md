@@ -58,6 +58,37 @@
 
 ## 进度追踪
 
+### 2026-09-19（DSH 会话）— 手写 ReAct 智能体循环打通（未接真 LLM）✅
+
+用户想用 Go 构建 agent（对比过 Python deepagents，定案：留在 Go 技术栈、
+先手写循环学原理，之后可对照 Eino 的 deep 包）。**本轮只通循环，未配大模型 key**。
+
+- **新增 `internal/agent/`**（全部中文教学注释）：
+  - `types.go`：Message/ToolCall/ToolSpec/Completion。Content 用 `*string`
+    区分 null 与空串（OpenAI 协议里 assistant 带工具调用时 content 是 null）
+  - `model.go`：`Model` 接口（循环只依赖它，测试塞假模型零成本）+
+    `OpenAICompatible` 客户端——DeepSeek/Kimi/Qwen 兼容模式/Ollama 通吃，
+    换厂商只改 BaseURL+Model。超时 60s（LLM 慢，和高德的 5s 不同档）
+  - `tool.go`：`Tool` 接口（Spec 给模型看 / Run 真执行），`parseInput` 收口参数校验
+  - `loop.go`：**ReAct 循环本体**。核心 4 行：调模型 → 无工具调用=出口 →
+    并发 goroutine 执行工具 → 结果按 ToolCallID 回填历史再循环。
+    防御件：MaxIterations 刹车（默认 10）、未知工具/工具报错转错误文本喂回
+    （模型可自救，不中断）、OnStep 回调（实时观察每轮）
+  - `tools_plan.go`：业务工具 ×2 —— `search_place`（包 amap.SearchPlaces）、
+    `plan_route`（直通 planner.Compute，校验单一真相源，零复制）。
+    工具层刻意薄：同步接口/异步 worker/agent 三方跑同一条解算链
+- **测试 `loop_test.go`**：fakeModel（脚本化逐轮应答+记录收到的消息）
+  + echoTool（带锁，-race 抓过一次并发写——反证并发路径真在并发）。
+  4 个场景：两轮标准流 / 未知工具+坏参数喂回 / MaxIterations 刹车 / 并发调用对位。
+  变异验证过牙齿（弄坏"结果喂回"立刻红）
+- **`cmd/agent-demo/main.go`**：独立演示入口（和 7800 服务互不干扰）。
+  运行：`set -a; source .env; set +a` + `LLM_BASE_URL/LLM_API_KEY/LLM_MODEL`
+  三个变量（任选 OpenAI 兼容厂商），`go run ./cmd/agent-demo "问题"`
+- **⏭️ 下次继续**：① 用户配 LLM key 实测真模型（观察它会怎么组合
+  search_place→plan_route）；② 对照 Eino deep 包看框架版多了什么
+  （todo 计划/文件系统工具/子代理）；③ 可选：agent 挂到 /api/agent 端点
+  （要过 auth）或接 Phase 2 的 Stream worker 做异步 agent 任务
+
 ### 2026-09-14（DSH 会话 · 三续）— 排查"搜索为什么不管用" + 订正会误导人的文案 ✅
 
 用户原话："为什么搜索地址不管用呢，是因为 amap 的 api 一定要，不能走高德的 api 吗"
