@@ -1,7 +1,7 @@
 // Package planner 把"一次规划"的业务规则收口在一个包里:参数校验(Validate) + 解算(Compute)。
 //
-// 为什么要抽出来:同步接口(POST /plan)和 Phase 2 的异步 worker 必须跑同一条解算链——
-// 复制一份就是两个真相源,哪天改了算法,总有一处被忘掉(和 Haversine 当年复制两份是同一个教训)。
+// 抽出来的原因:同步接口(POST /plan)和异步 worker 必须跑同一条解算链,
+// 复制实现会产生两个真相源,修改算法时必然漏掉一处。
 // api 层只负责 HTTP(bind / 状态码 / 路由),业务规则全在这里,谁调用都得到一样的结果。
 package planner
 
@@ -15,12 +15,12 @@ import (
 )
 
 // MaxPoints 驾车(批量接口)的上限。驾车走 v3/distance,一次请求能算
-// "所有点 → 某一个点"整列,所以 n 个点只要 n 次请求,50 点也就 50 次,扛得住。
+// "所有点 → 某一个点"整列,所以 n 个点只要 n 次请求,50 点也在配额可承受范围。
 const MaxPoints = 50
 
 // MaxPointsPairwise 逐对接口(步行/公交/混合出行)的上限。
 //
-// 步行/公交没有批量接口,只能一对一发请求,每发一次还要歇 350ms 尊重 QPS 配额。
+// 步行/公交没有批量接口,只能一对一发请求,每对请求间隔 350ms 以满足 QPS 配额。
 // 2026-09-17 起"解序"改用免费的直线预矩阵,不再为解序建全量矩阵 ——
 // 真实路网请求只花在最终顺序的 n-1 条边上:
 //
@@ -28,8 +28,8 @@ const MaxPoints = 50
 //	n=10 → 9 次 → 约 3.5 s
 //	n=50 → 49 次 → 约 18 s  ← 仍是逐对,线性变慢,还叠加前端逐段画线的 n-1 次
 //
-// 请求量已从平方级降到线性,上限理论可以放宽;但"边界上的余量"改起来
-// 牵动前端/文档/测试一整串,先不动数值,只把账算对(决策点 D4,同上 specs)。
+// 请求量已从平方级降到线性,上限理论可以放宽;但数值边界牵动前端/文档/测试
+// 一整串,维持不变(决策点 D4,见 specs)。
 const MaxPointsPairwise = 10
 
 // PlanRequest 一次规划请求。三个地方共用同一个结构:
@@ -53,7 +53,7 @@ type Result struct {
 }
 
 // ParseMode 把请求里的出行方式字符串转成 model.Mode。
-// 空字符串 = 调用方没传 → 默认驾车;其他非法值一律报错,绝不"猜一个"。
+// 空字符串视为未传,默认驾车;其余非法值一律报错,不做猜测式兜底。
 // (从 api 层搬过来:白名单校验必须只有一个真相源,/plan 和 /route 共用。)
 func ParseMode(s string) (model.Mode, error) {
 	if s == "" {
@@ -83,7 +83,7 @@ func Validate(points []model.Point, mode model.Mode, segments []string) error {
 	}
 
 	// 点数上限按"这次实际会走哪条路径"来定:
-	// 混合出行和步行/公交只能逐对发请求,上限收紧;只有单一驾车吃批量接口红利。
+	// 混合出行和步行/公交只能逐对发请求,上限收紧;只有单一驾车走批量接口。
 	limit, pathDesc := MaxPoints, "驾车批量接口"
 	if len(segments) > 0 || mode != model.ModeDriving {
 		limit, pathDesc = MaxPointsPairwise, "逐对请求接口"
@@ -140,8 +140,8 @@ func Compute(points []model.Point, mode model.Mode, manual bool, segments []stri
 		for i := 0; i < n-1; i++ {
 			km, err := am.Distance(points[i], points[i+1], model.Mode(segments[i]))
 			if err != nil {
-				// 部分失败容错:降级到直线距离,记日志 + 记降级路段,
-				// 警告一路带到结果里(错得悄无声息是最坏的失败方式)。
+				// 部分失败容错:降级到直线距离,并记录降级路段,
+				// 警告一路带到结果里——不允许静默失败。
 				segmentName := points[i].Name + "→" + points[i+1].Name
 				km = matrix.Haversine(points[i], points[i+1])
 				warnings = append(warnings, fmt.Sprintf("路段 %s 的高德路线获取失败，已降级为直线距离", segmentName))
@@ -172,7 +172,7 @@ func Compute(points []model.Point, mode model.Mode, manual bool, segments []stri
 		} else {
 			// 步行/公交:没有批量接口,建全量矩阵要 n×(n-1) 次请求。
 			// 改成"直线预矩阵解序(0 API) → 只对最终顺序的 n-1 条边查真路":
-			// 解序质量略降(直线远近≠实走远近),换掉约 90% 的请求量,划算。
+			// 解序质量略降(直线远近≠实走远近),换取约 90% 的请求量下降。
 			dists := matrix.HaversineMatrix(points)
 			order := seqOrder(n)
 			if !manual {
@@ -180,15 +180,15 @@ func Compute(points []model.Point, mode model.Mode, manual bool, segments []stri
 			}
 			result.OrderIdx = order
 			if am == nil || !am.HasAPIKey() {
-				// 没配 key:直线就是"本来该用的算法",设计如此,不算降级不报警告
+				// 没配 key:直线距离即预期行为,不算降级,不产生警告
 				result.TotalKm = solver.TourLength(dists, order)
 			} else {
 				for k := 0; k+1 < n; k++ {
 					a, b := points[order[k]], points[order[k+1]]
 					km, err := am.Distance(a, b, mode)
 					if err != nil {
-						// 部分失败容错:与混合出行分支同一套降级范式 ——
-						// 该段退直线、记路段名、警告带到结果,绝不悄悄错。
+						// 部分失败容错:与混合出行分支同一套降级范式——
+						// 该段退直线、记路段名、警告带到结果。
 						segName := a.Name + "→" + b.Name
 						km = dists[order[k]][order[k+1]]
 						warnings = append(warnings, fmt.Sprintf("路段 %s 的高德路线获取失败，已降级为直线距离", segName))

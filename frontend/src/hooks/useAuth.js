@@ -1,13 +1,10 @@
 // useAuth.js —— 登录态的单一数据源
 //
-// 页面刷新后登录态怎么恢复？靠 cookie：浏览器对每个请求自动带上，
-// 挂载时 GET /auth/me 问一嗓子"我是谁"，后端认得出就返回用户，
-// 认不出就是游客。前端**从不**保管 token —— HttpOnly cookie 的价值
-// 就在于 JS 摸不到它，这里存了 token 反而把这道防线拆了。
+// 登录态恢复:依赖 cookie(浏览器自动携带),挂载时 GET /auth/me 查询当前用户,
+// 认不出即为游客。前端不保管 token——HttpOnly cookie 的价值在于 JS 不可读,
+// 在前端存 token 反而破坏这道防线。
 //
-// 教学点：登录/注册之后**不需要刷新页面**。
-// user state 一变，依赖它的组件（TopBar 的角标）自动重渲染 ——
-// 这就是"状态驱动界面"和"操作完 location.reload()"的差距。
+// 登录/注册后不需要刷新页面:user state 变化,依赖它的组件自动重渲染。
 
 import { useCallback, useEffect, useState } from 'react'
 import { fetchMe, loginUser, logoutUser, registerUser } from '../api.js'

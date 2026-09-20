@@ -76,17 +76,13 @@ export default function App() {
   //
   // 这个 useMemo 算出"现在到底能不能规划"，以及不能的话是为什么。
   // 它依赖 [points.length, manual] —— 只有这两样变了才重新计算。
+  // 提前算的意义：在按钮上就拦住无效提交，而不是等后端返回 400。
   //
-  // 为什么要提前算：手写版是点了按钮才发请求，然后等后端返回 400 再 alert。
-  // 白跑一个来回，用户还得自己看懂错误。这里在按钮上就直接拦住。
-  //
-  // ⚠️ 但一定要记住：**前端校验只是体验优化，不是安全边界。**
-  // 后端那份校验一个都不能少 —— 别人可以用 curl 直接打你的接口。
+  // ⚠️ 前端校验只是体验优化，不是安全边界。
+  // 后端那份校验一个都不能少 —— 接口可以被直接调用。
   const { canPlan, blockReason, blockTone } = useMemo(() => {
     const n = points.length
-    // 一个点都没有时什么都不说：这时用户刚打开页面，
-    // 报一句"至少需要一个起点"像是他在开头就做错了。地点列表那块
-    // 已经写了"还没有地点，搜索添加…"，引导足够了。
+    // n === 0 时不提示：此时列表区的空态文案已承担引导。
     if (n === 0) return { canPlan: false, blockReason: '', blockTone: '' }
     if (n < 2) return { canPlan: false, blockReason: '还需要一个目的地', blockTone: 'info' }
 

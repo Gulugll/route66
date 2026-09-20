@@ -252,7 +252,7 @@ func (s *Service) UserFromToken(ctx context.Context, token string) (User, error)
 
 // EnsureSeedAdmin 确保种子管理员存在:已存在(同名)则跳过,不存在则创建。
 // 解决"第一个 admin 哪来"的鸡生蛋问题 —— 靠 env 的 ADMIN_USER/ADMIN_PASSWORD。
-// 账号已存在时**不更新密码**:环境变量改了不会悄悄重置线上账号。
+// 账号已存在时**不更新密码**:环境变量变更不应重置线上账号。
 func (s *Service) EnsureSeedAdmin(ctx context.Context, username, password string) error {
 	_, err := s.store.GetUserByName(ctx, username)
 	if err == nil {

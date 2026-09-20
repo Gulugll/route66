@@ -17,19 +17,18 @@ import (
 	"awesomeProject/internal/worker"
 )
 
-// main 是装配层:读配置、拼好各包、启动。只在这里做"接线",不写业务逻辑。
-// 装配策略一以贯之:外部依赖没配/挂了,对应功能降级或不启用,服务其余部分照常跑:
+// main 是装配层:读配置、拼好各包、启动。
+// 外部依赖没配/挂了,对应功能降级/不启用,服务其余部分照常跑:
 //  1. 缓存:优先 Redis(跨重启/多实例共享),连不上降级进程内 map
 //  2. 距离:高德客户端常驻,key 动态取(管理端 DB > env 兜底),没 key 走 haversine
 //  3. 数据库:配了 PG_DSN 才启用认证/异步任务/管理端;没配则同步 /plan 照常
 //  4. 管理端:独立端口(7801)单独一个引擎,和用户端(7800)同进程
 func main() {
 	cfg := config.Load()
-	ctx := context.Background() // worker 的生命周期;进程退出时随之结束(教学规模不做优雅停机)
+	ctx := context.Background() // worker 的生命周期;进程退出时随之结束
 
 	// —— 缓存层装配:Redis 优先,连不上降级内存 ——
-	// 现在无条件装配(以前只在有 key 时才装):key 本身也运行时可变,
-	// 装配时机不再和"有没有 key"绑定
+	// 现在无条件装配:key 本身也运行时可变,
 	var distCache cache.Cache
 	if redisCache, err := cache.NewRedis(cfg.RedisAddr, 24*time.Hour); err != nil {
 		log.Printf("redis unavailable (%v), using in-memory cache", err)
@@ -40,14 +39,14 @@ func main() {
 	}
 
 	// —— 配置中心 + 数据库:PG_DSN 是认证/异步/管理端的总开关 ——
-	// keyProvider 即使没有 DB 也要存在:它的 fallback 直接给 env 值,
+	// keyProvider 即使没有 DB 也要存在:它的 fallback 直接给 env 值,用户没有配置回退env值
 	// amap.Client 拿到的永远是同一个查询接口,DB 配没配对它透明
 	var keyProvider *settings.Provider
 	var authSvc *auth.Service
 	var plansRepo repo.TaskRepo
 	var taskQueue *queue.Queue
 
-	if cfg.PGDSN != "" {
+	if cfg.PGDSN != "" { //数据库有值
 		gormRepo, err := repo.NewGorm(cfg.PGDSN)
 		if err == nil {
 			err = gormRepo.Migrate(ctx)
@@ -64,7 +63,7 @@ func main() {
 			} else {
 				authSvc = auth.NewService(authStore)
 				// 种子管理员:env 给了就确保存在;没给则跳过(管理端仍可注册普通用户,
-				// 但没人能进管理 API —— 日志里说清楚,别让人纳闷 403)
+				// 但没人能进管理 API 403)
 				if cfg.AdminUser != "" && cfg.AdminPass != "" {
 					if err := authSvc.EnsureSeedAdmin(ctx, cfg.AdminUser, cfg.AdminPass); err != nil {
 						log.Printf("seed admin failed: %v", err)
@@ -82,7 +81,7 @@ func main() {
 			}
 			keyProvider = settings.NewProvider(settingStore, envFallback(cfg))
 		}
-	} else {
+	} else { //数据库连接失败，env兜底
 		keyProvider = settings.NewProvider(nil, envFallback(cfg)) // 纯 env 模式
 		log.Printf("PG_DSN not set: auth/async/admin disabled (sync /plan unaffected)")
 	}
@@ -121,7 +120,7 @@ func main() {
 	}
 	router := api.NewRouter(matrixService, amapClient, plansRepo, taskQueue, opts...)
 
-	// —— 两个引擎,任一退出即整个进程退出(教学规模不做各自的优雅停机) ——
+	// —— 两个引擎,任一退出即整个进程退出——
 	errCh := make(chan error, 2)
 	go func() {
 		log.Printf("listening on :%s", cfg.Port)
@@ -130,7 +129,6 @@ func main() {
 
 	// —— 管理端引擎(:7801)——
 	// 依赖 auth(角色门禁)+ settings(key 读写);没配 PG 就没有这两样,
-	// 管理端不启动 —— 404 的端口比 503 的诚实(同一原则)
 	if cfg.AdminPort != "" && authSvc != nil {
 		adminRouter := api.NewAdminRouter(authSvc, keyProvider, "admin", envFallbacks)
 		go func() {
@@ -160,7 +158,7 @@ func envFallback(cfg config.Config) func(string) string {
 }
 
 // keyProviderValue 统一的取值入口:Provider 查询失败(DB 抖动)时回落 env ——
-// 配置读取失败不该把距离计算一起打挂,兜底要有兜底。
+// 配置读取失败不该把距离计算一起打挂,兜底。
 func keyProviderValue(p *settings.Provider, name, envValue string) string {
 	if p == nil {
 		return envValue

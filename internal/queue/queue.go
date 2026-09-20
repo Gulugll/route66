@@ -45,7 +45,7 @@ func New(addr, stream, group, consumer string) *Queue {
 }
 
 // consumerName 给 consumer 一个默认身份:主机名 + 进程号。
-// 同一组里重名会互相"抢戏"(消息分给同名者算同一个消费者),所以尽量唯一。
+// 同一组内重名会被视为同一个消费者,影响消息分摊,所以必须唯一。
 func consumerName() string {
 	host, err := os.Hostname()
 	if err != nil {
@@ -84,8 +84,8 @@ func (q *Queue) Add(ctx context.Context, taskID int64) error {
 	return nil
 }
 
-// Read 从队列拉一条任务(BLOCK 5 秒:没任务就让内核挂起,和 net/http 的
-// Accept 同一个思路 —— 不空转烧 CPU)。没有消息时返回 (nil, nil),调用方继续循环。
+// Read 从队列拉一条任务(BLOCK 5 秒:没任务时阻塞挂起,与 net/http 的
+// Accept 同一思路,不空转)。没有消息时返回 (nil, nil),调用方继续循环。
 func (q *Queue) Read(ctx context.Context) ([]redis.XMessage, error) {
 	res, err := q.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    q.group,
@@ -106,9 +106,9 @@ func (q *Queue) Read(ctx context.Context) ([]redis.XMessage, error) {
 	return res[0].Messages, nil
 }
 
-// Ack 确认处理完成。没有 ACK 的任务会一直留在 PEL 里 ——
+// Ack 确认处理完成。没有 ACK 的任务会一直留在 PEL 里,
 // 所以"处理成功"和"处理失败(任务标 failed)"都要 ACK:
-// 失败的任务已经落库留了案底,消息本身没有重放价值。
+// 失败任务已落库记录,消息本身没有重放价值。
 func (q *Queue) Ack(ctx context.Context, id string) error {
 	return q.rdb.XAck(ctx, q.stream, q.group, id).Err()
 }

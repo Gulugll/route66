@@ -1,18 +1,16 @@
 // SearchModule.jsx —— 地名搜索 + 候选列表
 //
-// 这个组件演示三件事：
+// 这个组件覆盖三个模式:
 //
-// 1) **受控输入**：input 的 value 来自 state，onChange 只负责 setState。
-//    好处是"想清空输入框"就是 setQuery('')，不需要去 DOM 里找那个 input。
-//    手写版是 $('searchInput').value = '' —— 得先知道元素在哪。
+// 1) 受控输入:input 的 value 来自 state,onChange 只负责 setState。
+//    清空输入框就是 setQuery(''),不需要查 DOM。
 //
-// 2) **组件之间怎么通信**：这个组件不知道"地点加到哪里去了"。
-//    它只调用父组件传进来的 onPick(place) 回调。
-//    这叫"状态提升"：子组件负责交互，数据归谁管由父组件决定。
-//    所以这个组件里你找不到任何"添加地点"的逻辑 —— 那是 App 的事。
+// 2) 组件通信:本组件不知道"地点加到哪里去了",只调用父组件传入的
+//    onPick(place) 回调(状态提升)。子组件负责交互,数据归属由父组件决定,
+//    添加地点的逻辑在 App 里。
 //
-// 3) **异步操作在组件里怎么管**：searching 这个 state 让按钮在请求期间
-//    变成禁用态。没有它，用户会连点五次，发出五个请求。
+// 3) 异步操作管理:searching 这个 state 让按钮在请求期间禁用,
+//    防止重复提交。
 
 import { useRef, useState } from 'react'
 import { searchPlaces } from '../api.js'
@@ -27,9 +25,7 @@ export function SearchModule({ onPick, onError }) {
   const [candidates, setCandidates] = useState([])
   const [searching, setSearching] = useState(false)
 
-  // 用 ref 拿到真实的 input 元素 —— 唯一目的是"添加完地点后把焦点还给它"。
-  // 注意：我们没有用 ref 去读它的值（那是受控组件该做的事），
-  // 只用它调了一次 .focus()。ref 是"逃生舱"，该用的时候不别扭，但别拿它当状态用。
+  // ref 只用于"添加完地点后把焦点还给输入框",不用于读值(受控组件的职责)。
   const inputRef = useRef(null)
 
   async function doSearch() {
@@ -41,13 +37,12 @@ export function SearchModule({ onPick, onError }) {
       const data = await searchPlaces(q, city.trim())
       setCandidates(data.places || [])
     } catch (err) {
-      // 错误不自己弹 alert，而是交给父组件统一展示。
-      // 组件不该决定"错误长什么样" —— 那样每个组件都要维护一套错误 UI。
+      // 错误不自行展示,交给父组件统一处理,避免每个组件维护一套错误 UI。
       onError(err.message)
       setCandidates([])
     } finally {
-      // finally 保证无论成功失败都会解锁按钮。
-      // 漏了这句，一次请求失败按钮就永久禁用了 —— 手写版很容易犯这个错。
+      // finally 保证无论成功失败都会解锁按钮,
+      // 否则一次请求失败后按钮就永久禁用。
       setSearching(false)
     }
   }
@@ -57,7 +52,7 @@ export function SearchModule({ onPick, onError }) {
     // 选完清空：候选列表和输入框都归零，焦点回到输入框，方便连续添加。
     setQuery('')
     setCandidates([])
-    inputRef.current?.focus() // ?. 是可选链：ref 可能还没挂上，别炸
+    inputRef.current?.focus() // ?. 可选链:ref 可能尚未挂载
   }
 
   return (

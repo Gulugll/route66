@@ -77,7 +77,7 @@ func TwoOpt(dists [][]float64, order []int) []int {
 
 // SimulatedAnnealing 模拟退火:从"最近邻 + 2-opt"的局部最优出发,
 // 随机反转一段;变好就接受,变差也按 exp(-Δ/temp) 的概率接受,
-// 从而跳出局部最优。温度从 1000 指数降到 0.1,越到后面越"冷静"。
+// 从而跳出局部最优。温度从 1000 指数降到 0.1,接受劣解的概率随之降低。
 // 返回全程见过的最优顺序。
 //
 // 邻域与判据同 TwoOpt:j 可到路径末端、精确 TourLength 差
@@ -106,10 +106,10 @@ func SimulatedAnnealing(dists [][]float64, start int) []int {
 
 			cand := append([]int(nil), order...)
 			slices.Reverse(cand[i+1 : j+1])
-			// 精确算差值,不信简化公式(不对称矩阵的坑,同 TwoOpt)
+			// 精确计算 TourLength 差值,不使用简化公式(不对称矩阵下的已知问题,同 TwoOpt)
 			delta := TourLength(dists, cand) - curLen
 
-			// 变好就收;变差则以 exp(-Δ/temp) 概率收(温度越高越敢收差解)
+			// 优于当前解直接接受;更差时以 exp(-Δ/temp) 的概率接受(温度越高接受概率越大)
 			if delta < 0 || rand.Float64() < math.Exp(-delta/temp) {
 				order, curLen = cand, curLen+delta
 				if curLen < bestLen {

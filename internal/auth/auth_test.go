@@ -172,8 +172,8 @@ func TestUsernameTaken(t *testing.T) {
 	}
 }
 
-// TestExpiredSession:过期的会话必须无效,且会被顺手清理。
-// "顺便删"不是可有可无 —— sessions 表不被死 token 撑大就靠它。
+// TestExpiredSession:过期的会话必须无效,且会被清理。
+// 清理不可省略:sessions 表的体积控制依赖它。
 func TestExpiredSession(t *testing.T) {
 	store := newFakeStore()
 	svc := NewService(store)
@@ -193,7 +193,7 @@ func TestExpiredSession(t *testing.T) {
 }
 
 // TestSeedAdmin:种子管理员 —— 不存在则创建为 admin;已存在则**不动**它
-// (环境变量改了不该悄悄重置已有账号的密码/角色)。
+// (环境变量变更不应重置已有账号的密码/角色)。
 func TestSeedAdmin(t *testing.T) {
 	store := newFakeStore()
 	svc := NewService(store)

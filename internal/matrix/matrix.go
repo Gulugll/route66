@@ -26,22 +26,21 @@ func NewWithAmap(c *amap.Client) *Service { return &Service{amap: c} }
 // 要么全直线,不会出现"一半真实一半直线"的混搭结果。
 //
 // 第二个返回值 degraded 表示"这张矩阵是不是降级来的",必须由上层一路带到
-// HTTP 响应里。为什么不只用日志:日志在服务器上,用户看不到——用户拿到一个
-// 看起来正常的 45 km,却不知道那是直线估算,这是最坏的失败方式(错得悄无声息)。
+// HTTP 响应里。降级不能只写日志:日志对用户不可见,直线估算值必须显式告知。
 func (s *Service) DistanceMatrix(points []model.Point, mode model.Mode) ([][]float64, bool) {
-	// HasAPIKey 是"此刻"的判断:管理端还没配 key 时走直线(设计如此,不算降级),
-	// 配了之后同一进程的下一次请求就走真实路网 —— 动态 key 的热生效到这层自然成立
+	// HasAPIKey 是"此刻"的判断:未配 key 时走直线(设计如此,不算降级),
+	// 配了之后同一进程的下一次请求即走真实路网,动态 key 热生效到这层自然成立
 	if s.amap != nil && s.amap.HasAPIKey() {
 		dists, err := s.amap.DistanceMatrix(points, mode)
 		if err == nil {
 			return dists, false
 		}
-		// 配了高德但调用失败 —— 这才叫"降级"。
+		// 配了高德但调用失败
 		log.Printf("[matrix] amap %s failed (%v), falling back to haversine", mode, err)
 		return haversineMatrix(points), true
 	}
-	// 没配 key:haversine 就是"本来该用的算法",不是降级,不该给用户报警告。
-	// 区分"设计如此"和"出故障了"——两者的告警价值天差地别。
+	// 没配 key:直线距离即预期行为,不产生降级警告。
+	// 区分"设计如此"和"出故障",两者的告警语义不同。
 	return haversineMatrix(points), false
 }
 
@@ -53,7 +52,7 @@ func HaversineMatrix(points []model.Point) [][]float64 {
 	return haversineMatrix(points)
 }
 
-// haversineMatrix 全量直线距离矩阵。
+// haversineMatrix 全量直线距离矩阵。预先计算
 func haversineMatrix(points []model.Point) [][]float64 {
 	n := len(points)
 	dists := make([][]float64, n)
@@ -67,12 +66,8 @@ func haversineMatrix(points []model.Point) [][]float64 {
 }
 
 // Haversine 两点球面距离(公里),导出给 api 层复用。
-//
-// 为什么必须导出:api 做"混合出行某段失败"的降级时也要用同一个公式。
-// 之前 api 里复制了一份实现,注释还写着"避免循环依赖"——可 api 本来就
-// import 了 matrix,根本不存在环。同一个公式两份代码 = 两个真相源,
-// 哪天改地球半径或换算法,总有一处会被忘掉。
-// 结论:能复用就别复制,复制出来的第二份迟早对不上。
+// api 的"混合出行某段失败"降级也要用同一个公式:同一公式只能有一份实现,
+// 复制会产生两个真相源,修改时必然漏掉一处。
 func Haversine(a, b model.Point) float64 {
 	return haversine(a.Lat, a.Lng, b.Lat, b.Lng)
 }

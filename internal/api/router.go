@@ -100,7 +100,7 @@ func NewRouter(m *matrix.Service, am *amap.Client, r repo.TaskRepo, q *queue.Que
 	p.GET("/search", s.search)
 	p.GET("/route", s.route)
 	// 异步任务接口只在装配了存储 + Stream 时注册:
-	// 一个 404 的接口和一个 503 的接口,前者更诚实 —— 功能没部署就不该"看起来存在"。
+	// 未部署的功能不注册路由,404 比 503 更能准确表达"功能不存在"。
 	if s.repo != nil && s.queue != nil {
 		p.POST("/plans", s.createPlan)
 		p.GET("/plans/:id", s.getPlan)
@@ -265,8 +265,7 @@ func (s *Server) search(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 q 参数"})
 		return
 	}
-	// city 可空:前端不填就是全国搜索,填了(如"杭州")就限定该城市。
-	// 这是"参数化"——把硬编码变成调用方决定,接口更通用。
+	// city 可空:不传为全国搜索,传了(如"杭州")则限定该城市。
 	places, err := s.amap.SearchPlaces(q, c.Query("city"), 6)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "高德搜索失败: " + err.Error()})
@@ -276,12 +275,11 @@ func (s *Server) search(c *gin.Context) {
 }
 
 // route 是"两点之间的真实路网轨迹"代理接口:前端画路线用。
-// 和 /search 一个套路——前端不直接调高德,轨迹也走后端拿。
+// 与 /search 相同:前端不直接调高德,轨迹也由后端代理。
 //
-// 校验顺序有讲究:先校验参数,再看依赖是否可用。
-// 参数错了是**调用方**的问题,不管服务端当下能不能干活,都该直说
-// "你的参数有问题"(400);反过来先报 503,调用方会以为改成合法参数就行了,
-// 实际上服务端确实也没配 key —— 两种错误混在一起,排查就得多绕一圈。
+// 校验顺序:先校验参数(400),再看依赖是否可用(503)。
+// 参数错误是调用方的问题,与依赖可用性无关;若依赖不可用先返回 503,
+// 调用方会误以为修改参数能解决问题,两类故障混在一起会延长排查。
 func (s *Server) route(c *gin.Context) {
 	a, err := parsePoint(c.Query("origin"))
 	if err != nil {
