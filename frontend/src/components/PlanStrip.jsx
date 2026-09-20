@@ -7,12 +7,10 @@
 // 拖拽排序与原 PointList 同一套 HTML5 DnD 逻辑:
 // 跨事件传递的下标放 ref(写入立即生效),视觉态放 state。
 
-import { useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { SearchModule } from './SearchModule.jsx'
 import { Icon } from './icons.jsx'
 import { MODES, MODE_ICONS, MODE_LABELS } from '../theme.js'
-
-const NEXT_MODE = { driving: 'walking', walking: 'transit', transit: 'driving' }
 
 export function PlanStrip({
   points,
@@ -39,6 +37,13 @@ export function PlanStrip({
   const dragIndexRef = useRef(null)
   const [dragIndex, setDragIndex] = useState(null)
   const [overIndex, setOverIndex] = useState(null)
+  // 当前展开的段下标(null = 没有展开);同一时间只展开一段
+  const [openLeg, setOpenLeg] = useState(null)
+
+  // 切回自动优化时段选择失去意义,收起展开的选择器
+  useEffect(() => {
+    if (!manual) setOpenLeg(null)
+  }, [manual])
 
   // 手动输入坐标:工具条空间有限,默认折叠,点开才出现表单
   const [showManual, setShowManual] = useState(false)
@@ -67,6 +72,7 @@ export function PlanStrip({
     dragIndexRef.current = null
     setDragIndex(null)
     setOverIndex(null)
+    setOpenLeg(null) // 重排后段的下标已经变了,收起避免指向错误的段
   }
 
   const busy = planPhase === 'submitting' || planPhase === 'drawing'
@@ -98,53 +104,90 @@ export function PlanStrip({
       </div>
 
       <div className="plane-sec">
-        <div className="sec-label"><b>地点顺序</b>拖动排序 · 共 {points.length} 站</div>
+        <div className="sec-label"><b>地点顺序</b>拖动排序 · 点两站之间的连线选该段方式 · 共 {points.length} 站</div>
         <div className="chips">
           {points.length === 0 && <span className="chip-empty">还没有地点</span>}
           {points.map((p, i) => (
-            <span
-              key={p.id}
-              className={`chip-point${i === 0 ? ' origin' : ''}${dragIndex === i ? ' is-dragging' : ''}${overIndex === i && dragIndex !== null && dragIndex !== i ? ' is-over' : ''}`}
-              draggable
-              onDragStart={(e) => {
-                dragIndexRef.current = i
-                setDragIndex(i)
-                e.dataTransfer.effectAllowed = 'move'
-              }}
-              onDragOver={(e) => {
-                e.preventDefault()
-                if (overIndex !== i) setOverIndex(i)
-              }}
-              onDrop={(e) => {
-                e.preventDefault()
-                handleDrop(i)
-              }}
-              onDragEnd={() => {
-                dragIndexRef.current = null
-                setDragIndex(null)
-                setOverIndex(null)
-              }}
-            >
-              <span className="chip-handle">≡</span>
-              <span className="chip-badge">{i === 0 ? '起点' : `第${i}站`}</span>
-              {p.name}
-              {/* legMode 挂在"点"上表示"从这点到下一站怎么走",
-                  因此最后一个点没有下一站,不显示切换按钮 */}
-              {manual && i < points.length - 1 && (
+            <Fragment key={p.id}>
+              {/* 段连接线 = 两个 chip 之间的出行方式控件。
+                  段在"两点之间",控件就长在两点之间 —— 可见性即语义。
+                  自动优化不支持按段设方式(段间距离不可比),
+                  此时点击连线视为"用户想按段控制" → 自动切手动并展开选择。 */}
+              {i > 0 && (
                 <button
-                  className="chip-mode"
-                  data-mode={p.legMode}
-                  title={`到下一站：${MODE_LABELS[p.legMode] || '驾车'}（点击切换）`}
-                  aria-label={`到下一站：${MODE_LABELS[p.legMode] || '驾车'}`}
-                  onClick={() => onSetLegMode(p.id, NEXT_MODE[p.legMode || 'driving'])}
+                  className="leg-link"
+                  data-mode={points[i - 1].legMode || 'driving'}
+                  title={`第${i}段 · ${MODE_LABELS[points[i - 1].legMode || 'driving']}`}
+                  aria-label={`第${i}段出行方式：${MODE_LABELS[points[i - 1].legMode || 'driving']}`}
+                  onClick={() => {
+                    if (!manual) onManualChange(true)
+                    setOpenLeg(openLeg === i - 1 ? null : i - 1)
+                  }}
                 >
-                  <Icon name={MODE_ICONS[p.legMode] || 'car'} size={13} />
+                  <span className="leg-link-line" />
+                  <Icon name={MODE_ICONS[points[i - 1].legMode] || 'car'} size={13} />
                 </button>
               )}
-              <button className="chip-x" onClick={() => onRemove(p.id)} aria-label={`删除 ${p.name}`}>✕</button>
-            </span>
+              <span
+                className={`chip-point${i === 0 ? ' origin' : ''}${dragIndex === i ? ' is-dragging' : ''}${overIndex === i && dragIndex !== null && dragIndex !== i ? ' is-over' : ''}`}
+                draggable
+                onDragStart={(e) => {
+                  dragIndexRef.current = i
+                  setDragIndex(i)
+                  e.dataTransfer.effectAllowed = 'move'
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  if (overIndex !== i) setOverIndex(i)
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  handleDrop(i)
+                }}
+                onDragEnd={() => {
+                  dragIndexRef.current = null
+                  setDragIndex(null)
+                  setOverIndex(null)
+                }}
+              >
+                <span className="chip-handle">≡</span>
+                <span className="chip-badge">{i === 0 ? '起点' : `第${i}站`}</span>
+                {p.name}
+                <button
+                className="chip-x"
+                onClick={() => {
+                  setOpenLeg(null) // 删点会改变段的构成,收起避免指向错误的段
+                  onRemove(p.id)
+                }}
+                aria-label={`删除 ${p.name}`}
+              >
+                ✕
+              </button>
+              </span>
+            </Fragment>
           ))}
         </div>
+        {/* 行内展开的段方式选择器:规划带是 overflow-x:auto 容器,
+            浮动 popover 会被裁剪,行内展开没有定位问题 */}
+        {openLeg !== null && points[openLeg] && points[openLeg + 1] && (
+          <div className="leg-edit">
+            <span className="leg-edit-label">
+              第 {openLeg + 1} 段 · {points[openLeg].name || points[openLeg].id} → {points[openLeg + 1].name || '…'}
+            </span>
+            <span className="mode-pills">
+              {MODES.map((m) => (
+                <button
+                  key={m}
+                  className={`mode-pill${(points[openLeg].legMode || 'driving') === m ? ' on' : ''}`}
+                  onClick={() => onSetLegMode(points[openLeg].id, m)}
+                >
+                  <i style={{ background: `var(--${m})` }} />
+                  {MODE_LABELS[m]}
+                </button>
+              ))}
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="plane-sec">
