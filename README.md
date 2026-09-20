@@ -341,7 +341,7 @@ sequenceDiagram
     participant API as api.NewRouter
 
     M->>C: Load()
-    C-->>M: Config{Port, AMAP_KEY, RedisAddr, PG_DSN...}
+    C-->>M: Config: Port / AMAP_KEY / RedisAddr / PG_DSN 等
     M->>CA: NewRedis(addr, 24h)
     alt Ping 成功
         CA-->>M: *Redis（跨重启存活）
@@ -359,7 +359,7 @@ sequenceDiagram
     M->>MX: NewWithAmap(amapClient)
     M->>API: NewRouter(...) + NoRoute 托管 web/
     M->>M: router.Run(":7800")
-    Note over M: 阻塞在 net/http Serve() 的<br/>for { Accept(); go c.serve() } 循环
+    Note over M: 阻塞在 net/http Serve() 的 Accept 循环<br/>每个连接派发独立 goroutine，进程驻留
 ```
 
 - Redis 连接失败不报错不退出，降级进程内缓存，任一外部依赖不可用服务照常运行
