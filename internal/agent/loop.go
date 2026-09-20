@@ -22,15 +22,16 @@ type Agent struct {
 
 // Step 记录一轮循环:模型文本、工具调用及对应结果。
 type Step struct {
-	Iteration int
-	Text      string
-	Calls     []ToolCall
-	Results   []string // 与 Calls 一一对应,含错误文本
+	Iteration int        `json:"iteration"`
+	Text      string     `json:"text"`
+	Calls     []ToolCall `json:"calls"`
+	Results   []string   `json:"results"` // 与 Calls 一一对应,含错误文本
 }
 
 // Run 执行完整的 ReAct 循环,返回最终答案与全部过程记录。
-// 循环不持有跨 Run 状态,对话历史随参数进出,便于后续持久化或恢复。
-func (a *Agent) Run(ctx context.Context, userMsg string) (string, []Step, error) {
+// msgs 为对话历史(仅 user/assistant 纯文本,由调用方组装,最后一条必须是 user);
+// 循环不持有跨 Run 状态,历史随参数进出,便于后续持久化或恢复。
+func (a *Agent) Run(ctx context.Context, msgs []Message) (string, []Step, error) {
 	maxIter := a.MaxIterations
 	if maxIter <= 0 {
 		maxIter = 10
@@ -44,11 +45,12 @@ func (a *Agent) Run(ctx context.Context, userMsg string) (string, []Step, error)
 		specs = append(specs, t.Spec())
 	}
 
-	msgs := []Message{NewSystemMsg(a.SystemPrompt), NewUserMsg(userMsg)}
+	history := []Message{NewSystemMsg(a.SystemPrompt)}
+	history = append(history, msgs...)
 
 	var steps []Step
 	for i := 1; i <= maxIter; i++ {
-		completion, err := a.Model.Complete(ctx, msgs, specs)
+		completion, err := a.Model.Complete(ctx, history, specs)
 		if err != nil {
 			return "", steps, err
 		}
@@ -62,7 +64,7 @@ func (a *Agent) Run(ctx context.Context, userMsg string) (string, []Step, error)
 		}
 
 		// 先把调用本身记入历史(role=assistant),服务端才能将 role=tool 结果对回。
-		msgs = append(msgs, NewAssistantMsg(completion.Text, completion.Calls))
+		history = append(history, NewAssistantMsg(completion.Text, completion.Calls))
 
 		// 并发执行全部工具调用;结果按下标绑定,与调度顺序无关。
 		results := make([]string, len(completion.Calls))
@@ -79,7 +81,7 @@ func (a *Agent) Run(ctx context.Context, userMsg string) (string, []Step, error)
 
 		// 结果逐条回填历史,顺序与 Calls 一一对应,ToolCallID 必须一致。
 		for j, call := range completion.Calls {
-			msgs = append(msgs, NewToolMsg(call.ID, results[j]))
+			history = append(history, NewToolMsg(call.ID, results[j]))
 		}
 
 		steps = append(steps, step)

@@ -46,9 +46,10 @@ export function usePlan() {
   /**
    * 跑一次完整规划。
    *
-   * @param {{points: Array, manual: boolean}} args
+   * @param {{points: Array, manual: boolean, mode?: string}} args
+   *   mode 是自动模式的全局出行方式(默认 driving);手动模式按 points 上的 legMode 逐段算。
    */
-  const run = useCallback(async ({ points, manual }) => {
+  const run = useCallback(async ({ points, manual, mode = 'driving' }) => {
     const runId = ++runIdRef.current
     const isStale = () => runIdRef.current !== runId
 
@@ -60,7 +61,7 @@ export function usePlan() {
 
     let data
     try {
-      data = await planRoute({ points, manual })
+      data = await planRoute({ points, manual, mode })
     } catch (err) {
       if (isStale()) return
       setError(err.message)

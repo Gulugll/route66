@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"awesomeProject/internal/agent"
 	"awesomeProject/internal/amap"
 	"awesomeProject/internal/auth"
 	"awesomeProject/internal/matrix"
@@ -39,6 +40,8 @@ type Server struct {
 	// envFallbacks 配置名 → env 兜底值。管理端回显"来源"时用:
 	// handler 不直接读环境变量(集中到 config.Load 是既有约定)
 	envFallbacks map[string]string
+	// agentModel 智能体的模型实现;nil = 按 settings/env 配置构造 OpenAICompatible(测试注入假模型用)
+	agentModel agent.Model
 }
 
 // Option 装配选项(FUNCTIONAL OPTIONS 模式):新增可选依赖时,
@@ -97,6 +100,7 @@ func NewRouter(m *matrix.Service, am *amap.Client, r repo.TaskRepo, q *queue.Que
 	// 降级语义的开关收在这一个函数里,别处不出现第二个 if。
 	p := s.protected(router)
 	p.POST("/plan", s.plan)
+	p.POST("/agent", s.agentChat)
 	p.GET("/search", s.search)
 	p.GET("/route", s.route)
 	// 异步任务接口只在装配了存储 + Stream 时注册:

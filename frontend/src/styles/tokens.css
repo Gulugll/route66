@@ -56,6 +56,11 @@
   --panel-width: 352px;
   --topbar-height: 56px;
 
+  /* —— Agent 面板:识别色与出行的语义色区隔,只用于状态点/发送键/步骤标记 —— */
+  --agent-width: 376px;
+  --accent: #6E56CF;
+  --accent-soft: #EFEEFB;
+
   /* —— 字体 ——
      不引入 webfont：system-ui 在 macOS 上就是 SF Pro + PingFang SC，
      中文和数字都好看，还省掉一次网络请求。 */

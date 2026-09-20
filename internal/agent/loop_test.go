@@ -65,7 +65,7 @@ func TestRunToolCallThenAnswer(t *testing.T) {
 	tool := &echoTool{spec: ToolSpec{Name: "search_place"}, resp: `[{"name":"天坛公园"}]`}
 	a := &Agent{Model: model, Tools: []Tool{tool}, SystemPrompt: "test"}
 
-	answer, steps, err := a.Run(context.Background(), "天坛在哪")
+	answer, steps, err := a.Run(context.Background(), []Message{NewUserMsg("天坛在哪")})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestRunToolErrorsFeedBack(t *testing.T) {
 	tool := &echoTool{spec: ToolSpec{Name: "search_place"}, resp: "unused"}
 	a := &Agent{Model: model, Tools: []Tool{tool}, SystemPrompt: "test"}
 
-	answer, steps, err := a.Run(context.Background(), "hi")
+	answer, steps, err := a.Run(context.Background(), []Message{NewUserMsg("hi")})
 	if err != nil || answer != "好的,搜索出了点问题。" {
 		t.Fatalf("工具报错不该中断循环: answer=%q err=%v", answer, err)
 	}
@@ -133,7 +133,7 @@ func TestRunMaxIterations(t *testing.T) {
 	tool := &echoTool{spec: ToolSpec{Name: "search_place"}, resp: "ok"}
 	a := &Agent{Model: model, Tools: []Tool{tool}, MaxIterations: 3}
 
-	_, steps, err := a.Run(context.Background(), "hi")
+	_, steps, err := a.Run(context.Background(), []Message{NewUserMsg("hi")})
 	if err == nil || !strings.Contains(err.Error(), "最大迭代") {
 		t.Fatalf("应报最大迭代错误: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestRunParallelToolCalls(t *testing.T) {
 	tool := &echoTool{spec: ToolSpec{Name: "search_place"}, resp: "place"}
 	a := &Agent{Model: model, Tools: []Tool{tool}}
 
-	_, steps, err := a.Run(context.Background(), "hi")
+	_, steps, err := a.Run(context.Background(), []Message{NewUserMsg("hi")})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

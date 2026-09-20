@@ -16,9 +16,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { ControlPanel } from './components/ControlPanel.jsx'
+import { AgentPane } from './components/AgentPane.jsx'
 import { LoginPage } from './components/LoginPage.jsx'
 import { MapView } from './components/MapView.jsx'
+import { PlanStrip } from './components/PlanStrip.jsx'
 import { TopBar } from './components/TopBar.jsx'
 import { ToastStack } from './components/ui.jsx'
 
@@ -34,17 +35,17 @@ import { MAX_POINTS_BATCH, MAX_POINTS_PAIRWISE } from './theme.js'
 export default function App() {
   // ── 各个 hook 管自己那一块 ──
   const { mapKey, jscode } = useSettings()
-  const { points, addPoint, removePoint, movePoint, setLegMode } = usePoints()
+  const { points, addPoint, removePoint, movePoint, setLegMode, clearPoints } = usePoints()
   const plan = usePlan()
   const { toasts, push, dismiss } = useToasts()
   const auth = useAuth()
   const amap = useAmap(mapKey, jscode)
 
-  // 默认自动模式：产品的核心卖点就是"多点自动排序"（后端 TSP），
-  // 打开页面就该站在主线上。以前默认 manual=true（手动），叠加
-  // "勾选 = 手动"的反向 checkbox 文案，结果用户从来没见过自动模式长什么样。
-  // 默认值 = 最常用的那条路径，别让用户每次先做一遍配置才能到主线。
   const [manual, setManual] = useState(false)
+  // 自动模式的全局出行方式(交给后端 mode 字段);手动模式下即时应用到全部路段
+  const [mode, setMode] = useState('driving')
+  // Agent 面板开合:面板上的"收起"与地图上的浮动入口共享这一个状态
+  const [agentOpen, setAgentOpen] = useState(true)
 
   // ── 提示条 ──
   // useCallback 包一层，是为了让这个函数的**引用保持稳定**。
@@ -71,6 +72,15 @@ export default function App() {
 
   // ── 手动输入坐标 ──
   const handleAddManual = useCallback((point) => addPoint(point), [addPoint])
+
+  // ── 全局出行方式:自动模式给后端 mode;手动模式即时套用到全部路段 ──
+  const handleModeChange = useCallback(
+    (m) => {
+      setMode(m)
+      if (manual) points.forEach((p) => setLegMode(p.id, m))
+    },
+    [manual, points, setLegMode]
+  )
 
   // ── 「开始规划」的前置检查 ──
   //
@@ -109,8 +119,8 @@ export default function App() {
     // 这行能挡住。防御性代码不用很多，但关键入口要有。
     if (!canPlan) return
     // 把当前数据快照交给 usePlan，后面所有事（提交、取路网、更新进度）它负责。
-    plan.run({ points, manual })
-  }, [canPlan, plan, points, manual])
+    plan.run({ points, manual, mode })
+  }, [canPlan, plan, points, manual, mode])
 
   // ── 地点一变，之前的规划结果就过期了 ──
   //
@@ -156,34 +166,44 @@ export default function App() {
       />
       <div className="hairline" />
 
-      <div className="body">
-        <ControlPanel
-          points={points}
-          manual={manual}
-          planPhase={plan.phase}
-          planProgress={plan.progress}
-          planResult={plan.result}
-          planError={plan.error}
-          canPlan={canPlan}
-          planBlockReason={blockReason}
-          planBlockTone={blockTone}
-          onPickPlace={handlePickPlace}
-          onAddManual={handleAddManual}
-          onManualChange={setManual}
-          onRemove={removePoint}
-          onMove={movePoint}
-          onSetLegMode={setLegMode}
-          onPlan={handlePlan}
-          onError={showError}
-        />
-
-        <div className="divider-v" />
-
+      <div className={`body${agentOpen ? '' : ' agent-hidden'}`}>
         <MapView
           amap={amap}
           points={points}
           segments={plan.segments}
           onAddFromMap={handleAddFromMap}
+          fab={
+            !agentOpen && (
+              <button className="agent-fab" onClick={() => setAgentOpen(true)}>
+                ◀ 打开 RouteBot
+              </button>
+            )
+          }
+        />
+
+        <AgentPane onCollapse={() => setAgentOpen(false)} />
+
+        <PlanStrip
+          points={points}
+          manual={manual}
+          mode={mode}
+          planPhase={plan.phase}
+          planProgress={plan.progress}
+          planResult={plan.result}
+          planError={plan.error}
+          canPlan={canPlan}
+          blockReason={blockReason}
+          blockTone={blockTone}
+          onPickPlace={handlePickPlace}
+          onAddManual={handleAddManual}
+          onManualChange={setManual}
+          onModeChange={handleModeChange}
+          onRemove={removePoint}
+          onMove={movePoint}
+          onSetLegMode={setLegMode}
+          onPlan={handlePlan}
+          onClear={clearPoints}
+          onError={showError}
         />
       </div>
 

@@ -13,6 +13,10 @@ type Config struct {
 	PGDSN     string // PostgreSQL 连接串;空 = 认证/异步任务/管理端不启用(同步 /plan 照常)
 	AdminUser string // 管理员种子账号(P2 认证启用时,启动时确保存在)
 	AdminPass string
+
+	LLMBaseURL string // OpenAI 兼容服务地址;空 = agent 端点按缺省值兜底
+	LLMAPIKey  string // LLM 密钥;空 = /agent 返回 503
+	LLMModel   string // 模型名
 }
 
 func Load() Config {
@@ -26,6 +30,10 @@ func Load() Config {
 		PGDSN:     os.Getenv("PG_DSN"),
 		AdminUser: os.Getenv("ADMIN_USER"),
 		AdminPass: os.Getenv("ADMIN_PASSWORD"),
+
+		LLMBaseURL: os.Getenv("LLM_BASE_URL"),
+		LLMAPIKey:  os.Getenv("LLM_API_KEY"),
+		LLMModel:   os.Getenv("LLM_MODEL"),
 	}
 }
 
