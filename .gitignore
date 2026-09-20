@@ -38,3 +38,6 @@
 
 # AI 会话的本地记忆 / 工作日志（跨会话的项目记忆在 AGENTS.md，那份进仓库）
 .workbuddy/
+
+# superpowers 设计文档产物（本地参考资料,不进仓库）
+docs/superpowers/
