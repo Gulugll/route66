@@ -1,10 +1,8 @@
-// ui.jsx —— 小积木（可复用的基础组件）
+// ui.jsx —— 可复用的基础组件
 //
-// 判断"该不该抽组件"的标准不是行数，而是**重复次数**：
-// 同一段结构出现 3 次以上才值得抽。下面这几个都是这个标准下的产物。
-//
-// SectionHeader 用了 4 次、TextField 用了 3 次、Checkbox 和 Chip 各 1~2 次。
-// 抽出来的好处不只是少写代码 —— 更重要的是"改一处，全局生效"。
+// 抽组件的标准不是行数,而是重复次数:同一段结构出现 3 次以上才值得抽。
+// SectionHeader 用了 4 次、TextField 用了 3 次、Checkbox 和 Chip 各 1~2 次;
+// 抽出后改一处即全局生效。
 
 import { useId } from 'react'
 import { Icon } from './icons.jsx'
@@ -27,11 +25,9 @@ export function Chip({ children }) {
 /**
  * 受控输入框 = 标签 + 输入框 + 错误提示。
  *
- * 注意这是"受控组件"：value 由父组件传进来，输入时只调 onChange。
- * input 自己**不保存**任何状态。好处是"界面上显示什么"永远等于
- * "state 里是什么"，不会出现两边不一致。手写版就是靠 document.getElementById
- * 到处读值（比如 $('cityInput').value.trim()），谁改了值、什么时候改的，
- * 得满文件找。
+ * 受控组件:value 由父组件传入,输入时只调 onChange,
+ * input 自身不保存状态。界面上显示的永远等于 state 里的值,
+ * 不存在两份数据不一致的问题。
  */
 export function TextField({
   label,
@@ -112,13 +108,11 @@ export function Checkbox({ checked, onChange, children, disabled }) {
 }
 
 /**
- * 提示条堆栈 —— 替代手写版的 alert()。
+ * 提示条堆栈。
  *
- * 手写版所有错误都用浏览器 alert() 弹：不可控、打断流程、样式和产品无关。
- * 这里改成页面上方的内联提示条，可以关掉，也不阻塞操作。
- *
- * 组件是纯函数：给什么 errors 就画什么，自己不记录状态。
- * "怎么出现、怎么消失"由父组件（App）的 state 决定 —— 这叫"状态提升"。
+ * 页面上方的内联提示条,可关闭、不阻塞操作。
+ * 组件是纯函数:给什么 toasts 就渲染什么,自己不记录状态;
+ * "怎么出现、怎么消失"由父组件(App)的 state 决定(状态提升)。
  */
 const TOAST_META = {
   error: { icon: 'alertCircle' },

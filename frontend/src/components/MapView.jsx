@@ -1,24 +1,18 @@
 // MapView.jsx —— 地图区
 //
-// ⭐ 这个文件是全项目 useEffect 用得最重的地方，也是最能说明
-// "React 和命令式库怎么共存"的例子。
+// React 与命令式地图库共存的样板:把"数据"和"绘制"分成多个 effect。
 //
-// 核心思路：**把"数据"和"绘制"分成两个 effect。**
+//   effect A:同步标记   —— 依赖 [map, points]
+//   effect B:同步折线   —— 依赖 [map, segments]
+//   effect C:绑定点击   —— 依赖 [map, onAddFromMap]
 //
-//   effect A：同步标记   —— 依赖 [map, points]
-//   effect B：同步折线   —— 依赖 [map, segments]
-//   effect C：绑定点击   —— 依赖 [map, onAddFromMap]
+// 每个 effect 只负责一类同步,依赖数组显式声明。
 //
-// 每个 effect 只干一件事，依赖数组写得明明白白。
-// 手写版是一堆函数互相调用（addPoint → renderList + new Marker；
-// removePoint → renderList + map.remove；onEnd → renderList + redrawMarkers + initSortable），
-// 每加一个功能就得想"要记得同步哪几个地方"。
-//
-// ⚠️ 一个必须知道的代价：
-// 高德的地图对象是**命令式**的 —— 它没有"给我一组新标记，你自己 diff"这种接口。
-// 所以下面每次都是"全部删掉、全部重画"。对十几个点是完全可以接受的，
-// 但如果以后要显示几千个点，就得自己写增量更新（比较新旧列表，只增删差集）。
-// 记住：React 的 diff 只覆盖它自己渲染出来的 DOM，管不到第三方库内部的对象。
+// ⚠️ 已知代价:
+// 高德地图对象是命令式接口,没有"给一组新标记自动 diff"的能力,
+// 因此这里采用全删全画。十几个点的量级下可接受;
+// 点数达到千级时需改为增量更新(比较新旧列表,只增删差集)。
+// 注意:React 的 diff 只覆盖自己渲染的 DOM,管不到第三方库内部的对象。
 
 import { useEffect, useRef } from 'react'
 import { MODE_COLORS, MODE_ICONS, MODE_LABELS, MODES } from '../theme.js'
@@ -27,10 +21,10 @@ import { Icon } from './icons.jsx'
 export function MapView({ amap, points, segments, onAddFromMap }) {
   const { containerRef, map, status, error, zoomIn, zoomOut } = amap
 
-  // 存"地图上的标记对象"。用 ref 而不是 state，因为改它不需要重渲染 ——
-  // 它是我们和高德之间的账本，不是界面状态。
-  // 账本里同时记了"这些标记属于哪张地图"：换地图（换 key）时不能拿着
-  // 旧地图的标记去新地图上删 —— 那样删不掉，还会残留。
+  // 存"地图上的标记对象"。用 ref 而不是 state:修改不需要触发重渲染,
+  // 它是同步用的登记表,不是界面状态。
+  // 同时记录"这些标记属于哪张地图":换地图(换 key)时不能拿
+  // 旧地图的标记去新地图上删,否则删不掉且会残留。
   const markersRef = useRef({ map: null, items: [] })
   const polylinesRef = useRef({ map: null, items: [] })
 
@@ -64,9 +58,8 @@ export function MapView({ amap, points, segments, onAddFromMap }) {
       (seg) =>
         new window.AMap.Polyline({
           path: seg.path,
-          // 颜色来自 theme.js 的语义色表：颜色即语义，图例和线永远同色。
-          // 0.75 的不透明度让底图还能透出来 —— 手写版这里是 0.7，
-          // 用户反馈过"太不透明"，这里调到 0.75 配合更淡的底图正好。
+          // 颜色来自 theme.js 的语义色表:图例和折线永远同色。
+          // 0.75 不透明度兼顾底图透出与路线可读性。
           strokeColor: MODE_COLORS[seg.mode] || MODE_COLORS.driving,
           strokeWeight: 5,
           strokeOpacity: 0.75,
@@ -78,8 +71,8 @@ export function MapView({ amap, points, segments, onAddFromMap }) {
     polylinesRef.current = { map, items }
 
     // 画完路线自动缩放到能装下整条路线。
-    // ⚠️ setFitView 必须在地图尺寸稳定之后调用 —— 容器还在 0 宽时
-    // 计算出来的视野是错的。所以这里等一帧再调。
+    // ⚠️ setFitView 必须在地图容器尺寸稳定后调用——
+    // 容器 0 宽时计算出的视野是错的,因此等一帧再调。
     if (items.length > 0) {
       const timer = setTimeout(() => map.setFitView(), 0)
       return () => clearTimeout(timer)
@@ -93,11 +86,10 @@ export function MapView({ amap, points, segments, onAddFromMap }) {
     const handler = (e) => onAddFromMap({ lat: e.lnglat.lat, lng: e.lnglat.lng })
     map.on('click', handler)
 
-    // 清理函数：把监听摘掉。
-    // 不摘的话，每次 onAddFromMap 变化都会再挂一个监听 ——
-    // 点一下地图会加上 2 个、3 个、5 个点，而且很难查。
-    // （onAddFromMap 用 useCallback 包了一层，见 App.jsx，
-    //   目的就是让这个函数的引用保持稳定，别让 effect 白跑。）
+    // 清理函数必须摘掉监听:否则 onAddFromMap 每次变化都会叠加一个监听,
+    // 一次点击会加入多个点。
+    // (onAddFromMap 在 App.jsx 用 useCallback 包裹,引用稳定,
+    //  避免这个 effect 不必要地重跑。)
     return () => map.off('click', handler)
   }, [map, onAddFromMap])
 
@@ -115,9 +107,8 @@ export function MapView({ amap, points, segments, onAddFromMap }) {
           <Icon name="pin" size={28} style={{ color: 'var(--border)' }} />
           <span className="map-empty-title">还没有配置高德 Key</span>
           {/* 登录墙改造后 key 不再由使用者手填:管理员在管理台(7801)配置,
-              经 /config/public 下发到这里。这里的文案只说"去哪找谁",不说"自己填"——
-              以前写"填入后即可查看真实路网"还把 JS key 和服务端 AMAP_KEY 混为一谈,
-              踩过文案误导的坑,两种 key 的分工见 README「高德 key」一节。 */}
+              经 /config/public 下发到这里。文案只说"去哪配置",不说"自己填"。
+              JS key 与服务端 AMAP_KEY 的分工见 README「高德 key」一节。 */}
           <span className="map-empty-desc">
             地图渲染需要高德 JS key,由管理员在管理台统一配置
             <br />

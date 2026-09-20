@@ -34,18 +34,15 @@ const (
 	StatusFailed = "failed"
 )
 
-// Task 一次异步规划任务的完整档案 —— 同时是业务结构和 GORM 表模型
-// (教学规模只有一张表,不搞 PO/DO 两层转换;等真出现"两边字段对不上"
-// 的那天再拆,才是拆的正确时机)。
+// Task 一次异步规划任务的完整档案,同时是业务结构和 GORM 表模型
+// (当前只有一张表,不做 PO/DO 两层转换;出现字段分歧时再拆)。
 //
 // 表结构唯一真相源就是这些 gorm 标签:
-//   - status 用 varchar(16),三态约束由代码层保证 —— 曾经用过 MySQL 的
-//     `type:enum('queued',...)`,换 PostgreSQL 时才发现在 MySQL 里写
-//     方言类型标签=把可移植性钉死在一款数据库上(2026-09-17 换 PG 的实际教训)。
-//     "该数据库层约束还是代码层约束"是权衡:ENUM 更硬但不可移植,varchar 松但通用
-//   - (status, created_at) 复合索引:将来"按状态翻任务列表"会用到
-//   - CreatedAt/UpdatedAt 是 GORM 的约定字段名,建行/改行时自动填充,
-//     不用我们手动 SET
+//   - status 用 varchar(16),三态约束由代码层保证。方言 enum 标签会把
+//     可移植性绑死在单一数据库(MySQL→PG 迁移时实际遇到):
+//     ENUM 约束更硬但不可移植,varchar 松但通用
+//   - (status, created_at) 复合索引:按状态筛选任务列表时使用
+//   - CreatedAt/UpdatedAt 是 GORM 的约定字段名,建行/改行时自动填充
 type Task struct {
 	ID         int64     `gorm:"primaryKey;autoIncrement"`
 	ReqJSON    []byte    `gorm:"column:req_json;type:jsonb;not null"`
@@ -77,12 +74,11 @@ type GormTaskRepo struct {
 
 // NewGorm 建立 PostgreSQL 连接并返回仓库。
 // DSN 形如 host=localhost port=5432 user=xxx password=xxx dbname=routeplanner sslmode=disable。
-// 2026-09-17 从 MySQL 换过来:GORM 的红利就在这 —— repo 层业务代码一行没改,
-// 只动了 driver 和两处方言标签(enum→varchar, json→jsonb)。
+// 2026-09-17 从 MySQL 迁移时 repo 层业务代码零改动,只换了 driver 和
+// 两处方言标签(enum→varchar, json→jsonb),依赖接口抽象的收益。
 func NewGorm(dsn string) (*GormTaskRepo, error) {
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		// GORM 默认日志在错误时才打,慢查询阈值保持默认 ——
-		// 教学规模不需要自定义 logger,但要知道这个东西存在
+		// GORM 默认日志在错误时才打,慢查询阈值保持默认
 		Logger: logger.Default.LogMode(logger.Warn),
 	})
 	if err != nil {
@@ -92,8 +88,7 @@ func NewGorm(dsn string) (*GormTaskRepo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get sql.DB: %w", err)
 	}
-	// 连接池参数按"解算任务量"给保守值:任务本来就串行消费,
-	// 池子开大了除了多占 PG 连接没有任何收益
+	// 连接池参数按解算任务量给保守值:任务串行消费,更大的池只会多占 PG 连接
 	sqlDB.SetMaxOpenConns(5)
 	sqlDB.SetMaxIdleConns(2)
 	sqlDB.SetConnMaxLifetime(time.Hour)
@@ -105,7 +100,7 @@ func NewGorm(dsn string) (*GormTaskRepo, error) {
 func (r *GormTaskRepo) DB() *gorm.DB { return r.db }
 
 // Migrate 建表(已存在则比对差异做增量调整)。启动时跑一次。
-// AutoMigrate 是 GORM 的建表/改表方案:教学规模一条调用替代迁移工具,
+// AutoMigrate 是 GORM 的建表/改表方案
 // 表结构的真相源就是 Task 结构体的 gorm 标签。
 func (r *GormTaskRepo) Migrate(ctx context.Context) error {
 	if err := r.db.WithContext(ctx).AutoMigrate(&Task{}); err != nil {

@@ -1,25 +1,14 @@
-// PointList.jsx —— 地点列表（可拖拽排序 + 每段出行方式）
+// PointList.jsx —— 地点列表(可拖拽排序 + 每段出行方式)
 //
-// ⭐ 这个文件是整次改版最值得看的地方 —— 它直接解决了手写版那个"坑"。
+// 为什么 React 下不需要手动管理拖拽库的元素引用:
+// React 重排列表时不重建 DOM 节点,而是靠 key 识别"同一个元素"并移动它。
+// 节点引用稳定,任何持有它的第三方(拖拽库、地图实例、canvas)都不会失效。
+// 对比:全量重建 DOM 的方案(如"renderList() 重建所有 <li>")必须
+// destroy 再重新绑定第三方库,并维护"改了 state 之后要手动调哪些刷新"的隐性约定。
 //
-// 手写版的困境（app.js 里那段注释写得很明白）：
-//     renderList() 会重建所有 <li>（旧元素脱离 DOM），
-//     Sortable 持有的元素引用会失效，所以重建后必须 destroy 再 new 重新绑定。
-// 于是代码里出现了一个可重入的 initSortable()，以及"改了 state 之后
-// 要记得调 renderList + redrawMarkers + initSortable"这种隐性约定。
-//
-// 现在为什么不需要了？
-//
-// React 重排列表时**不会重建 DOM 节点**，它靠 key 认出"还是同一个东西"，
-// 然后**移动**那个已经存在的节点。节点从头到尾是同一条命，
-// 所以任何持有它的第三方（拖拽库、地图实例、canvas）都不会失效。
-//
-// 换句话说：手写版的问题是"用 DOM 当数据存储 + 每次全量重建"，
-// React 用 key 做 diff 恰好把这两点都解决了。
-//
-// 拖拽本身这里用的是浏览器原生 HTML5 DnD，没引入第三方库。
-// 因为"拖拽"在 React 里可以纯靠 state 表达：拖到谁头上 → setOverIndex(i)，
-// 松手 → 把新顺序写进数组。全程没有一个 DOM 操作。
+// 拖拽本身用浏览器原生 HTML5 DnD,不引入第三方库:
+// "拖到谁头上 → setOverIndex(i),松手 → 写入新顺序",
+// 全程只改 state,不操作 DOM。
 
 import { useRef, useState } from 'react'
 import { Icon } from './icons.jsx'
@@ -98,11 +87,10 @@ export function PointList({ points, manual, onRemove, onMove, onSetLegMode }) {
       )}
 
       {/* 一个 <li> = 一个地点 + 它到下一站的那一段。
-          把"段"放进同一个 li 里，好处是 <ul> 只有一种子元素，
-          拖拽时"第几个"和"数组下标"天然一一对应，不用做换算。
-          （手写版是把段连接线作为兄弟节点插在中间，于是 Sortable 的
-           oldIndex 把连接线也算进去了，必须改用 oldDraggableIndex —— 那个
-           bug 就是这么来的。数据结构设计得好，一整类 bug 就不会出现。）*/}
+          把"段"放进同一个 li 里,<ul> 只有一种子元素,
+          拖拽序号和数组下标天然一一对应,无需换算。
+          (若把段连接线作为兄弟节点插在中间,拖拽的 oldIndex
+           会把连接线也算进去,需要额外区分 draggableIndex。)*/}
       <ul className="point-list">
         {points.map((p, i) => (
           <li
@@ -110,14 +98,14 @@ export function PointList({ points, manual, onRemove, onMove, onSetLegMode }) {
             className="point-li"
             draggable
             onDragStart={(e) => {
-              dragIndexRef.current = i // 立刻生效，drop 时一定读得到
-              setDragIndex(i) // 只为了把这张卡变虚
-              // 有些浏览器不设 effectAllowed 就不让 drop，设一下更稳
+              dragIndexRef.current = i // ref 立即生效,drop 时一定读得到
+              setDragIndex(i)          // 仅用于当前卡的视觉态
+              // 部分浏览器不设置 effectAllowed 就不触发 drop
               e.dataTransfer.effectAllowed = 'move'
             }}
             onDragOver={(e) => {
-              // ⚠️ 必须 preventDefault，否则浏览器认为"这里不接受放置"，
-              // drop 事件根本不会触发。这是 HTML5 DnD 最经典的坑。
+              // ⚠️ 必须 preventDefault,否则浏览器认为"此处不接受放置",
+              // drop 事件不会触发。HTML5 DnD 的必要步骤。
               e.preventDefault()
               if (overIndex !== i) setOverIndex(i)
             }}
@@ -126,8 +114,8 @@ export function PointList({ points, manual, onRemove, onMove, onSetLegMode }) {
               handleDrop(i)
             }}
             onDragEnd={() => {
-              // dragEnd 一定会触发（包括拖到外面松手），
-              // 所以清理状态放这里最保险，不会留下一个"永远在拖"的幽灵。
+              // dragEnd 必然触发(包括拖出区域后松手),
+              // 状态清理统一放在这里,避免残留拖拽态。
               dragIndexRef.current = null
               setDragIndex(null)
               setOverIndex(null)
@@ -150,12 +138,9 @@ export function PointList({ points, manual, onRemove, onMove, onSetLegMode }) {
                 {p.name}
               </span>
 
-              {/* 坐标用 <span>，JSX 会自动把内容当**文本**插入。
-                  手写版必须自己写 esc() 把 < > & 转义，因为那里是
-                  innerHTML = 拼字符串。JSX 里 {变量} 天然就是文本节点，
-                  所以一个叫 <img onerror=...> 的地点名在这里只是普通文字。
-                  这就是为什么这个 React 版里一行 esc() 都不需要 ——
-                  和 Go 的 html/template 自动转义是同一类保障。 */}
+              {/* 坐标用 <span>,JSX 的 {变量} 是文本节点,内容自动转义。
+                  恶意地点名(如 <img onerror=...>)只会显示为普通文字,
+                  与 Go 的 html/template 自动转义是同一类保障。 */}
               <span className="point-coords">
                 {p.lng.toFixed(2)}, {p.lat.toFixed(2)}
               </span>

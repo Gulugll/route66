@@ -1,20 +1,14 @@
 // useAmap.js —— 高德地图的生命周期
 //
-// 这是整个前端里**最不适合用 React 直接描述**的一块，也是理解 useEffect
-// 和 useRef 最好的例子。原因是：
+// 高德地图是命令式 API:new AMap.Map / map.add / map.remove,
+// 接受的是"做什么";React 是声明式,描述"应该长什么样"。
+// 两者共存的边界是 useEffect:
+//   React 负责"什么时候做"(依赖变化即重跑),命令式库负责"怎么做"。
 //
-//   高德地图是**命令式**的 —— new AMap.Map(...)、map.add(marker)、map.remove(marker)。
-//   它不接收"应该长什么样"，它接受"去做什么"。
-//   而 React 是声明式的 —— 你描述"应该长什么样"。
-//
-// 两者要共存，办法是在**边界**上做转换，这个边界就是 useEffect：
-//   React 负责"什么时候该做"（依赖变了就重跑），
-//   命令式库负责"具体怎么做"。
-//
-// 还有一个关键认知：**不是所有东西都该放进 state。**
-//   - 地图实例：创建一次就不再变，改它也不会让界面重新渲染 → 放 useRef
-//   - 地图"就绪/失败"这个状态：界面要显示不同东西 → 放 useState
-// 把地图实例放进 state 会引发无意义的连锁渲染，甚至死循环。
+// 另一个原则:不是所有东西都该放进 state。
+//   - 地图实例:创建后不变,变更也不需要触发渲染 → useRef
+//   - 地图"就绪/失败"状态:界面据此渲染不同内容 → useState
+// 地图实例放入 state 会引发无意义的连锁渲染。
 
 import { useEffect, useRef, useState } from 'react'
 import { DEFAULT_CENTER, DEFAULT_ZOOM } from '../theme.js'

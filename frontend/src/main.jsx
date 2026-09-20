@@ -20,16 +20,14 @@ import './styles/app.css'
 const root = createRoot(document.getElementById('root'))
 
 root.render(
-  // StrictMode 只影响**开发环境**，生产构建里它什么都不做。
+  // StrictMode 只影响开发环境,生产构建无操作。
   //
-  // 它做的最重要的一件事：把每个 effect 故意"挂载 → 卸载 → 再挂载"一遍。
-  // 这不是 bug，是在逼你写正确的**清理函数**。
-  // 如果某个 effect 没有清理干净（比如往 document 挂了监听没摘、
-  // 定时器没清、地图实例没 destroy），StrictMode 下会立刻现形 ——
-  // 而不是等到上线后用户切来切去才慢慢泄漏。
+  // 它会把每个 effect 故意"挂载 → 卸载 → 再挂载"一遍,
+  // 用于验证清理函数是否正确:未清理的监听/定时器/地图实例会立刻现形,
+  // 而不是上线后才慢慢泄漏。
   //
-  // 这个项目里 useAmap（地图销毁）、MapView（高德事件监听）、
-  // App（登录墙三分支）都是靠它验出来的。
+  // 本项目中 useAmap(地图销毁)、MapView(高德事件监听)、
+  // App(登录墙三分支)都经过它的验证。
   <StrictMode>
     <App />
   </StrictMode>

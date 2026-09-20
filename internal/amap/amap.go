@@ -127,9 +127,9 @@ func (c *Client) DistanceMatrix(points []model.Point, mode model.Mode) ([][]floa
 
 // maxColumnConcurrent 驾车矩阵"同时在途"的列请求数上限(信号量容量)。
 //
-// 为什么是 4,而不是"越多越好":并发度的上限由 key 的 QPS 配额决定,不由核数决定。
-// 高德对超配额请求的回应是 CUQPS_HAS_EXCEEDED_THE_LIMIT——开 50 个 goroutine
-// 只会同时收获 50 个报错,还把配额烧得更快。
+// 为什么是 4,而不是"越多越好":并发度上限由 key 的 QPS 配额决定,不由核数决定。
+// 高德对超配额请求返回 CUQPS_HAS_EXCEEDED_THE_LIMIT——开 50 个 goroutine
+// 只会同时收到 50 个报错,并加速耗尽配额。
 // 4 路并发 × 单请求约 300ms ≈ 峰值 13 QPS,对常见个人认证配额是安全的;
 // 如果你的 key 在控制台「流量分析-配额管理」里的 QPS 更低,把它调小即可。
 const maxColumnConcurrent = 4
@@ -141,11 +141,11 @@ const maxColumnConcurrent = 4
 // 每列 90% 的时间都在等网络回包——等的时候 CPU 闲着,完全可以去发下一列。
 // 这是并发(I/O 重叠)最理想的形状:等待互相填满,而不是靠多核硬算。
 //
-// ── 但"能并发"不等于"无脑 go 出去",三个问题必须逐个回答 ──
+// ── 但"能并发"不等于"无限制 go 出去",三个问题必须逐个回答 ──
 //
 //  1. 最多同时发几个? → 信号量限流,见 maxColumnConcurrent 的注释。
 //
-//  2. 谁写矩阵?会不会打架? → 每个 goroutine 只写**自己那一列** dists[i][j]
+//  2. 谁写矩阵?是否存在竞争? → 每个 goroutine 只写**自己那一列** dists[i][j]
 //     (j 固定,i 遍历)。不同 goroutine 碰的内存位置零交集,元素级并发写
 //     在 Go 里是安全的,连锁都不用加。
 //     两个前提,缺一不可:
@@ -224,9 +224,9 @@ func (c *Client) drivingMatrix(points []model.Point) ([][]float64, error) {
 			}
 		}(j, origins, idxs)
 		// 为什么把 j/origins/idxs 显式传参而不是闭包直接捕获?
-		// Go 1.22 起循环变量每轮都是新实例,捕获也安全;但显式传参把
-		// "这个 goroutine 用的是这一轮的值"写在脸上,review 的人不需要
-		// 记住"哪个 Go 版本开始没这个坑"——并发代码里的隐式知识越少越好。
+		// Go 1.22 起循环变量每轮都是新实例,捕获也安全;显式传参把
+		// "这个 goroutine 用的是这一轮的值"写在签名里,不依赖对
+		// Go 版本语义差异的记忆——并发代码里的隐式知识越少越好。
 	}
 
 	// 阻塞到所有列收工。此刻 dists 要么完整,要么 firstErr 非空。
@@ -238,9 +238,8 @@ func (c *Client) drivingMatrix(points []model.Point) ([][]float64, error) {
 }
 
 // wrapColumnErr 把某一列的失败包装成带上下文的错误。
-// 单独拆出来是为了给"限流"类错误加人话提示:CUQPS_HAS_EXCEEDED_THE_LIMIT
-// 是高德的"超过 QPS"报错,并发改造后**最可能**撞上的就是它——
-// 错误信息要能指导行动:告诉你调哪个常量,而不是只丢一个英文码。
+// 对限流类错误(CUQPS_HAS_EXCEEDED_THE_LIMIT,并发改造后最可能撞上的)
+// 附加可操作的提示:错误信息要指明调整哪个常量,而不是只给一个英文码。
 func wrapColumnErr(col int, err error) error {
 	if strings.Contains(err.Error(), "CUQPS") {
 		return fmt.Errorf("第 %d 列: %w(高德限流:并发超过了 key 的 QPS 配额,把 amap.go 的 maxColumnConcurrent 调小)", col, err)
@@ -251,7 +250,7 @@ func wrapColumnErr(col int, err error) error {
 // pairwiseMatrix 逐对矩阵(walking/transit):没有批量接口,只能一对一发请求。
 // 注意两点:
 //  1. 高德个人 key 的 QPS 限制很严(实测步行约 3/s),连发会返回
-//     CUQPS_HAS_EXCEEDED_THE_LIMIT——所以请求之间要"节流"(sleep)尊重配额
+//     CUQPS_HAS_EXCEEDED_THE_LIMIT,请求之间必须节流
 //  2. 教学规模(≤10 点)可接受;点数多会慢,这是逐对接口的代价
 func (c *Client) pairwiseMatrix(points []model.Point, mode model.Mode) ([][]float64, error) {
 	n := len(points)
@@ -276,8 +275,7 @@ func (c *Client) pairwiseMatrix(points []model.Point, mode model.Mode) ([][]floa
 			}
 			dists[i][j] = km
 			c.store(k, km)
-			// 节流:每次请求后歇一歇,别打爆 QPS 被限流。
-			// 这里只在实际发了请求后 sleep,缓存命中不 sleep(不费配额)。
+			// 节流:仅在实际发了请求后等待,缓存命中不消耗配额、不等待。
 			time.Sleep(350 * time.Millisecond)
 		}
 	}

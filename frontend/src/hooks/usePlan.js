@@ -1,19 +1,12 @@
 // usePlan.js —— 「开始规划」这条异步链路的完整状态
 //
-// 手写版里这条链路是：
-//     plan()  →  fetch('/plan')  →  写 result.innerHTML  →  drawRoute()
-//     drawRoute() 里再 for 循环 await fetch('/route')，边拿边画
-//
-// 问题在最后一环：**边拿边画**意味着界面上没有任何进度可言 ——
-// 10 个点要走 30 秒，用户只能盯着一个没反应的按钮。
-//
-// 这里把它显式地拆成"阶段"(phase)，界面就能如实反映当前在干什么：
+// 链路被显式拆成"阶段"(phase),界面可以如实反映当前在干什么:
 //
 //     idle ──▶ submitting ──▶ drawing ──▶ done
 //              (算距离+排序)   (逐段取路网)
 //
-// 教学点：把"一个长时间的异步过程"建模成一组明确的阶段，
-// 是前端做加载反馈的标准手法。阶段本身也是 state，也由 React 驱动界面。
+// 把长时间的异步过程建模成一组明确的阶段,是前端做加载反馈的标准手法。
+// 阶段本身也是 state,由 React 驱动界面。
 
 import { useCallback, useRef, useState } from 'react'
 import { fetchRoute, planRoute } from '../api.js'

@@ -5,12 +5,12 @@
 // 不碰 HTTP,也不关心任务是谁提的:它只是"拿到请求,产出结果"。
 //
 // ── 已知简化(刻意的,不是遗漏) ──
-//  1. 失败也 ACK:解算失败时任务标 failed 落库留案底,消息直接确认掉。
-//     没做"失败重试"—— 高德偶发抖动会把任务打成 failed,用户重提一次即可。
-//  2. 没做 PEL 重新认领:worker 处理到一半崩了,任务会滞留在 pending 列表,
-//     需要人工 XAUTOCLAIM(或将来加一个定时认领循环)。当前单 worker 教学
-//     规模下,这个洞的代价 = "极少数任务永远 queued",可接受但要心里有数。
-//  这两条是 Phase 2 之后的可靠性话题,一起做了就是过度设计。
+//  1. 失败也 ACK:解算失败时任务标 failed 落库,消息直接确认。
+//     没做失败重试——高德偶发抖动会把任务打成 failed,用户重提一次即可。
+//  2. 没做 PEL 重新认领:worker 处理到一半崩溃时,任务会滞留在 pending 列表,
+//     需要人工 XAUTOCLAIM(或将来加定时认领循环)。当前单 worker 规模下,
+//     影响仅限"极少数任务永远 queued",可接受。
+//  这两条属于可靠性增强,当前规模下不做,避免过度设计。
 package worker
 
 import (
@@ -49,8 +49,7 @@ func Run(ctx context.Context, q *queue.Queue, r repo.TaskRepo, m *matrix.Service
 
 		msgs, err := q.Read(ctx)
 		if err != nil {
-			// Redis 抖一下不该让 worker 退出:记日志歇一秒再试。
-			// 队列这种基础设施"暂时不可用"是常态,要有 resilience
+			// Redis 短暂不可用是常态,不应让 worker 退出:记日志后重试
 			log.Printf("[worker] read failed (%v), retrying in 1s", err)
 			select {
 			case <-ctx.Done():
@@ -66,8 +65,8 @@ func Run(ctx context.Context, q *queue.Queue, r repo.TaskRepo, m *matrix.Service
 }
 
 // processOne 处理单条任务:取档案 → 校验 → 解算 → 写库 → ACK。
-// 任何一步失败都把任务标 failed(带原因),然后照样 ACK ——
-// 消息已经没有重放价值,案底在数据库里,前端轮询时能看到失败原因。
+// 任何一步失败都把任务标 failed(带原因),然后照样 ACK——
+// 消息已无重放价值,失败原因记录在数据库里,前端轮询可见。
 func processOne(ctx context.Context, q *queue.Queue, r repo.TaskRepo,
 	m *matrix.Service, am *amap.Client, msgID string, values map[string]any) {
 
@@ -76,7 +75,7 @@ func processOne(ctx context.Context, q *queue.Queue, r repo.TaskRepo,
 	taskID, err := strconv.ParseInt(rawID, 10, 64)
 	if err != nil {
 		log.Printf("[worker] message %s has bad task_id %q, ack & drop", msgID, rawID)
-		_ = q.Ack(ctx, msgID) // 坏消息留在队列里会永远堵着,丢弃是唯一正解
+		_ = q.Ack(ctx, msgID) // 坏消息留在队列里会持续阻塞,只能确认丢弃
 		return
 	}
 
@@ -103,7 +102,7 @@ func processOne(ctx context.Context, q *queue.Queue, r repo.TaskRepo,
 		result, err = planner.Compute(points, mode, req.Manual, req.Segments, m, am)
 	}
 	if err != nil {
-		// 失败写库留案底(前端轮询能看到原因),消息 ack 掉
+		// 失败写库(前端轮询可见原因),消息 ack 掉
 		failTask(ctx, r, q, msgID, taskID, err.Error())
 		return
 	}
