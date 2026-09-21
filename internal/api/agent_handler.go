@@ -116,6 +116,16 @@ func (s *Server) agentChat(c *gin.Context) {
 		OnStep: func(step agent.Step) {
 			writeNDJSON(c, gin.H{"type": "step", "step": step})
 		},
+		// 正文增量 → delta 事件;推理模型的思考过程 → think 事件,
+		// 前端据此把"漫长的等待"变成"看得见的思考"。
+		OnDelta: func(d agent.Delta) {
+			if d.Content != "" {
+				writeNDJSON(c, gin.H{"type": "delta", "text": d.Content})
+			}
+			if d.Reasoning != "" {
+				writeNDJSON(c, gin.H{"type": "think", "text": d.Reasoning})
+			}
+		},
 	}
 
 	answer, _, err := a.Run(ctx, msgs)

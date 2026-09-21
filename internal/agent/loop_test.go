@@ -17,13 +17,17 @@ type fakeModel struct {
 	seen   [][]Message // 每次调用收到的消息快照
 }
 
-func (f *fakeModel) Complete(_ context.Context, msgs []Message, _ []ToolSpec) (Completion, error) {
+func (f *fakeModel) Complete(_ context.Context, msgs []Message, _ []ToolSpec, onDelta func(Delta)) (Completion, error) {
 	f.seen = append(f.seen, append([]Message(nil), msgs...))
 	if f.calls >= len(f.script) {
 		return Completion{}, nil
 	}
 	c := f.script[f.calls]
 	f.calls++
+	// 有文本就模拟一次流式推送,保证 onDelta 路径也被覆盖
+	if c.Text != "" && onDelta != nil {
+		onDelta(Delta{Content: c.Text})
+	}
 	return c, nil
 }
 

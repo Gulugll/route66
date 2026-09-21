@@ -4,7 +4,7 @@
 // 本组件只负责渲染与收发;可折叠由父级(App)控制,因为收起按钮
 // 出现在面板上、展开入口(浮动按钮)出现在地图上,两者必须共享状态。
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAgent } from '../hooks/useAgent.js'
 
 const SUGGESTIONS = [
@@ -45,10 +45,22 @@ function truncate(s, n) {
   return s.length > n ? s.slice(0, n) + '…' : s
 }
 
-export function AgentPane({ onCollapse }) {
-  const { threads, busy, unavailable, send } = useAgent()
+export function AgentPane({ onCollapse, onPlan }) {
+  const { threads, busy, unavailable, streamText, thinkText, send } = useAgent({ onPlan })
   const [input, setInput] = useState('')
   const inputRef = useRef(null)
+  // 消息区自动滚底:新气泡/流式增量出现时跟随,用户手动上滚则不打扰
+  const bodyRef = useRef(null)
+  const followRef = useRef(true)
+  const onScroll = () => {
+    const el = bodyRef.current
+    if (!el) return
+    followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+  }
+  useEffect(() => {
+    const el = bodyRef.current
+    if (el && followRef.current) el.scrollTop = el.scrollHeight
+  })
 
   const submit = () => {
     if (!input.trim() || busy || unavailable) return
@@ -70,7 +82,7 @@ export function AgentPane({ onCollapse }) {
         <button className="agent-collapse" onClick={onCollapse}>收起 ▶</button>
       </div>
 
-      <div className="agent-body">
+      <div className="agent-body" ref={bodyRef} onScroll={onScroll}>
         {threads.length === 0 && !unavailable && (
           <div className="suggest">
             <span className="suggest-label">试试这样问</span>
@@ -104,8 +116,18 @@ export function AgentPane({ onCollapse }) {
           return <div key={i} className="msg msg-bot">{m.text}</div>
         })}
 
-        {/* busy 且最后一项是步骤占位:输入光标表示 RouteBot 正在工作 */}
-        {busy && threads[threads.length - 1]?.kind === 'steps' && (
+        {/* 流式区:思考过程(推理模型) + 正文逐字输出。
+            done 后 streamText 清空,最终答案以完整气泡落入 threads。 */}
+        {busy && thinkText && !streamText && (
+          <div className="msg msg-think">思考中 · {truncate(thinkText, 120)}</div>
+        )}
+        {busy && streamText && (
+          <div className="msg msg-bot">
+            {streamText}
+            <span className="caret" />
+          </div>
+        )}
+        {busy && !streamText && !thinkText && threads[threads.length - 1]?.kind === 'steps' && (
           <div className="msg msg-bot"><span className="caret" /></div>
         )}
 

@@ -14,7 +14,7 @@
 //
 // 这就是"状态提升"的另一面：把状态提到够高，但别再往上提。
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { AgentPane } from './components/AgentPane.jsx'
 import { LoginPage } from './components/LoginPage.jsx'
@@ -35,7 +35,8 @@ import { MAX_POINTS_BATCH, MAX_POINTS_PAIRWISE } from './theme.js'
 export default function App() {
   // ── 各个 hook 管自己那一块 ──
   const { mapKey, jscode } = useSettings()
-  const { points, addPoint, removePoint, movePoint, setLegMode, clearPoints } = usePoints()
+  const { points, addPoint, removePoint, movePoint, setLegMode, replacePoints, clearPoints } =
+    usePoints()
   const plan = usePlan()
   const { toasts, push, dismiss } = useToasts()
   const auth = useAuth()
@@ -80,6 +81,25 @@ export default function App() {
       if (manual) points.forEach((p) => setLegMode(p.id, m))
     },
     [manual, points, setLegMode]
+  )
+
+  // ── RouteBot 方案联动 ──
+  // RouteBot 调 plan_route 算出方案后,把结果"落"进工作台:
+  // 地点表整体替换为方案顺序(规划带 chips 跟着变),规划带采用结果并补画轨迹。
+  // 至此 agent 不只是"会说话",而是真的在操作这个应用的规划能力。
+  //
+  // skipPlanResetRef:下面的"points 变了就作废旧结果"不变量是给用户操作用的;
+  // agent 同步是"换了一套地点+结果"的原子动作,reset 会把它刚写入的结果清掉,
+  // 所以同步这一次要跳过。之后的用户编辑照常触发 reset。
+  const skipPlanResetRef = useRef(false)
+  const handleAgentPlan = useCallback(
+    (ordered, result, mode) => {
+      skipPlanResetRef.current = true
+      replacePoints(ordered)
+      plan.applyAgentPlan({ ordered, result, mode })
+      push('RouteBot 的方案已同步到规划带', 'info')
+    },
+    [replacePoints, plan, push]
   )
 
   // ── 「开始规划」的前置检查 ──
@@ -128,12 +148,14 @@ export default function App() {
   // 与其在每个操作里记得手写一句 plan.reset()（漏一个就出现"结果和地点对不上"），
   // 不如写成一条规则：**只要 points 变了，就作废旧结果。**
   //
-  // 这是 effect 的正确用法之一：声明"一条不变量"，
-  // 而不是手动在每个修改点重复维护它。
+  // 例外:RouteBot 方案同步是"地点+结果"一起换的原子动作,
+  // skipPlanResetRef 让这一次变更跳过 reset(见 handleAgentPlan)。
   useEffect(() => {
+    if (skipPlanResetRef.current) {
+      skipPlanResetRef.current = false
+      return
+    }
     plan.reset()
-    // 依赖数组里只放 points：plan.reset 是稳定的（useCallback [] 包过），
-    // 放进来只会让 lint 高兴，语义上没有增量。这里明确写注释说明。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [points])
 
@@ -181,7 +203,7 @@ export default function App() {
           }
         />
 
-        <AgentPane onCollapse={() => setAgentOpen(false)} />
+        <AgentPane onCollapse={() => setAgentOpen(false)} onPlan={handleAgentPlan} />
 
         <PlanStrip
           points={points}

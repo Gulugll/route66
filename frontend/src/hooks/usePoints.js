@@ -81,7 +81,24 @@ export function usePoints() {
     setPoints((prev) => prev.map((p) => (p.id === id ? { ...p, legMode: mode } : p)))
   }, [])
 
+  /**
+   * 整表替换(RouteBot 方案同步用):按传入顺序重建地点列表。
+   * 与其逐个 addPoint(连续 setPoints 的函数式更新虽然正确,但语义是"追加"),
+   * 不如一个动作表达"这是新的方案"。
+   */
+  const replacePoints = useCallback((list) => {
+    setPoints(
+      (list || []).map((p, i) => ({
+        id: nextId(),
+        name: p.name || `地点${i + 1}`,
+        lat: p.lat,
+        lng: p.lng,
+        legMode: p.legMode || 'driving',
+      }))
+    )
+  }, [])
+
   const clearPoints = useCallback(() => setPoints([]), [])
 
-  return { points, addPoint, removePoint, movePoint, setLegMode, clearPoints }
+  return { points, addPoint, removePoint, movePoint, setLegMode, replacePoints, clearPoints }
 }
