@@ -82,7 +82,7 @@ export function PlanStrip({
 
       <div className="plane-sec">
         <div className="sec-label"><b>添加地点</b>搜索地名或输入坐标</div>
-        <SearchModule onPick={onPickPlace} onError={onError} />
+        <SearchModule compact onPick={onPickPlace} onError={onError} />
         {showManual ? (
           <div>
             <div className="manual-form">
@@ -215,19 +215,20 @@ export function PlanStrip({
 
       <div className="plane-sec action-sec">
         <div className="sec-label"><b>执行</b></div>
-        <button className="btn-primary" disabled={!canPlan || busy} onClick={onPlan}>
-          {busy ? '规划中…' : '开始规划'}
-        </button>
+        <div className="action-row">
+          <button className="btn-primary" disabled={!canPlan || busy} onClick={onPlan}>
+            {busy ? '规划中…' : '开始规划'}
+          </button>
+          <button className="btn-text" onClick={onClear}>清空全部地点</button>
+        </div>
         <div className={`action-msg ${blockTone}`}>
           {busy
             ? `第 ${planProgress.done}/${planProgress.total} 段取路网…`
-            : blockReason || (
-                <button className="btn-text" onClick={onClear}>清空全部地点</button>
-              )}
+            : blockReason}
         </div>
       </div>
 
-      <div className="plane-sec grow" aria-label="规划结果">
+      <div className="plane-sec grow result-sec" aria-label="规划结果">
         <div className="sec-label"><b>规划结果</b></div>
         {planError ? (
           <div className="action-msg danger">{planError}</div>

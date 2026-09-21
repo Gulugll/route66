@@ -274,7 +274,7 @@ curl "http://localhost:7800/route?origin=116.3975,39.9087&dest=116.3972,39.9163&
 | `internal/agent/types.go` | 类型 | `Message` / `ToolCall` / `ToolSpec`，对应 OpenAI Chat 协议消息形状 |
 | `internal/agent/model.go` | 模型 | `Model` 接口 + `OpenAICompatible` 实现（DeepSeek / Kimi / Qwen 兼容模式 / Ollama，换厂商只改 BaseURL 与 Model） |
 | `internal/agent/tool.go` | 工具 | `Tool` 接口：`Spec()` 提供说明书，`Run()` 执行 |
-| `internal/agent/loop.go` | 循环 | `Agent.Run()`：ReAct 循环 + `MaxIterations` 防失控 + `OnStep` 逐轮回调 |
+| `internal/agent/loop.go` | 循环 | `Agent.Run()`：ReAct 循环 + `MaxIterations` 防失控 + `OnStep`/`OnDelta` 流式回调 |
 | `internal/agent/tools_plan.go` | 业务工具 | `search_place`（直通 `amap.Client.SearchPlaces`）、`plan_route`（直通 `planner.Compute`） |
 | `cmd/agent-demo/main.go` | 装配层 | 独立入口，与 7800 服务互不依赖 |
 

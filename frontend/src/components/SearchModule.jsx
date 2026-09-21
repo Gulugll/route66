@@ -11,13 +11,17 @@
 //
 // 3) 异步操作管理:searching 这个 state 让按钮在请求期间禁用,
 //    防止重复提交。
+//
+// compact 变体:主工作台底部规划带用的单行形态——
+// 搜索框/城市/按钮排成一行,候选列表浮在下方(绝对定位),
+// 不像默认形态那样竖着堆三层把工具条撑高。
 
 import { useRef, useState } from 'react'
 import { searchPlaces } from '../api.js'
 import { Icon } from './icons.jsx'
 import { SectionHeader, TextField } from './ui.jsx'
 
-export function SearchModule({ onPick, onError }) {
+export function SearchModule({ onPick, onError, compact = false }) {
   const [query, setQuery] = useState('')
   // 城市默认填北京：和"默认地图视野是北京"保持一致。
   // 限定城市能让 POI 搜索准得多（"故宫"在全国范围内可能命中一堆同名地点）。
@@ -55,6 +59,53 @@ export function SearchModule({ onPick, onError }) {
     inputRef.current?.focus() // ?. 可选链:ref 可能尚未挂载
   }
 
+  const candidatesList =
+    candidates.length > 0 && (
+      <ul className={`candidates${compact ? ' candidates--float' : ''}`}>
+        {candidates.map((place, i) => (
+          <li
+            // key 用"内容特征"而不是下标：候选列表每次搜索都换一批，
+            // 用下标当 key 会让 React 把新旧候选错认成同一个东西。
+            key={`${place.name}-${place.lat}-${place.lng}`}
+            className={`candidate${i === 0 ? ' is-active' : ''}`}
+            onClick={() => pick(place)}
+          >
+            <Icon name="pin" size={14} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />
+            <div className="candidate-text">
+              <span className="candidate-name">{place.name}</span>
+              <span className="candidate-addr">{place.address || '—'}</span>
+            </div>
+          </li>
+        ))}
+      </ul>
+    )
+
+  if (compact) {
+    return (
+      <div style={{ position: 'relative', minWidth: 0 }}>
+        <div className="add-row">
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <TextField
+              icon="search"
+              value={query}
+              onChange={setQuery}
+              onEnter={doSearch}
+              inputRef={inputRef}
+              placeholder="搜索地名，如 故宫"
+            />
+          </div>
+          <div style={{ width: 86 }}>
+            <TextField value={city} onChange={setCity} onEnter={doSearch} placeholder="城市" />
+          </div>
+          <button className="btn-ghost" onClick={doSearch} disabled={searching}>
+            {searching ? '搜索中…' : '搜索'}
+          </button>
+        </div>
+        {candidatesList}
+      </div>
+    )
+  }
+
   return (
     <div className="module">
       <SectionHeader title="添加地点" hint="高德 POI 搜索" />
@@ -90,28 +141,7 @@ export function SearchModule({ onPick, onError }) {
         suffix="留空 = 全国"
       />
 
-      {/* 条件渲染：没候选就什么都不渲染。
-          React 里 {cond && <X/>} 是最常见的写法，cond 为 false 时
-          渲染的是 false —— React 知道"false 不渲染任何东西"。 */}
-      {candidates.length > 0 && (
-        <ul className="candidates">
-          {candidates.map((place, i) => (
-            <li
-              // key 用"内容特征"而不是下标：候选列表每次搜索都换一批，
-              // 用下标当 key 会让 React 把新旧候选错认成同一个东西。
-              key={`${place.name}-${place.lat}-${place.lng}`}
-              className={`candidate${i === 0 ? ' is-active' : ''}`}
-              onClick={() => pick(place)}
-            >
-              <Icon name="pin" size={14} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />
-              <div className="candidate-text">
-                <span className="candidate-name">{place.name}</span>
-                <span className="candidate-addr">{place.address || '—'}</span>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+      {candidatesList}
     </div>
   )
 }

@@ -23,7 +23,7 @@ import (
 // amap/planner 依赖,测试不需要假高德服务器。
 type fakeAgentModel struct{ calls int }
 
-func (f *fakeAgentModel) Complete(_ context.Context, _ []agent.Message, _ []agent.ToolSpec) (agent.Completion, error) {
+func (f *fakeAgentModel) Complete(_ context.Context, _ []agent.Message, _ []agent.ToolSpec, onDelta func(agent.Delta)) (agent.Completion, error) {
 	f.calls++
 	if f.calls == 1 {
 		call := agent.ToolCall{ID: "call-1", Type: "function"}
@@ -31,7 +31,9 @@ func (f *fakeAgentModel) Complete(_ context.Context, _ []agent.Message, _ []agen
 		call.Function.Arguments = `{}`
 		return agent.Completion{Calls: []agent.ToolCall{call}}, nil
 	}
-	return agent.Completion{Text: "推荐顺序:天安门 → 故宫 → 天坛,全程 4.7 km"}, nil
+	const text = "推荐顺序:天安门 → 故宫 → 天坛,全程 4.7 km"
+	onDelta(agent.Delta{Content: text})
+	return agent.Completion{Text: text}, nil
 }
 
 func newAgentTestRouter(model agent.Model, env map[string]string) *gin.Engine {
@@ -82,21 +84,32 @@ func TestAgentChatStream(t *testing.T) {
 	}
 
 	lines := strings.Split(strings.TrimSpace(resp.Body.String()), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("应有 2 行(step + done),实际 %d: %s", len(lines), resp.Body.String())
+	if len(lines) != 3 {
+		t.Fatalf("应有 3 行(step + delta + done),实际 %d: %s", len(lines), resp.Body.String())
 	}
 
-	var first struct {
+	var stepEvt struct {
 		Type string `json:"type"`
 		Step struct {
 			Iteration int `json:"iteration"`
 		} `json:"step"`
 	}
-	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
+	if err := json.Unmarshal([]byte(lines[0]), &stepEvt); err != nil {
 		t.Fatalf("第 1 行不是合法 JSON: %v", err)
 	}
-	if first.Type != "step" || first.Step.Iteration != 1 {
+	if stepEvt.Type != "step" || stepEvt.Step.Iteration != 1 {
 		t.Errorf("第 1 行应为 step 事件: %s", lines[0])
+	}
+
+	var deltaEvt struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &deltaEvt); err != nil {
+		t.Fatalf("第 2 行不是合法 JSON: %v", err)
+	}
+	if deltaEvt.Type != "delta" || !strings.Contains(deltaEvt.Text, "4.7 km") {
+		t.Errorf("第 2 行应为 delta 事件: %s", lines[1])
 	}
 
 	var last struct {

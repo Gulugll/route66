@@ -18,6 +18,8 @@ type Agent struct {
 	MaxIterations int
 	// OnStep 每轮结束回调,可用于日志、埋点或过程展示;可为 nil。
 	OnStep func(Step)
+	// OnDelta 模型流式增量回调(正文/思考),可为 nil;转发给 Model 的流式输出。
+	OnDelta func(Delta)
 }
 
 // Step 记录一轮循环:模型文本、工具调用及对应结果。
@@ -50,7 +52,7 @@ func (a *Agent) Run(ctx context.Context, msgs []Message) (string, []Step, error)
 
 	var steps []Step
 	for i := 1; i <= maxIter; i++ {
-		completion, err := a.Model.Complete(ctx, history, specs)
+		completion, err := a.Model.Complete(ctx, history, specs, a.OnDelta)
 		if err != nil {
 			return "", steps, err
 		}
