@@ -64,7 +64,9 @@ func (s *Server) agentChat(c *gin.Context) {
 	}
 	modelName := s.settingOr(ctx, settings.KeyLLMModel)
 	if modelName == "" {
-		modelName = "deepseek-chat"
+		// ponytail: 默认值以 DeepSeek 当前在售模型为准(deepseek-chat 已下线),
+		// 换厂商时这里给的就是该厂商的通用兜底,建议显式配置
+		modelName = "deepseek-flash"
 	}
 
 	var req struct {

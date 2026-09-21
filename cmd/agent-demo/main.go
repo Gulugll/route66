@@ -34,7 +34,7 @@ func main() {
 		baseURL = "https://api.deepseek.com"
 	}
 	if model == "" {
-		model = "deepseek-chat"
+		model = "deepseek-flash"
 	}
 
 	question := "帮我规划一条从天安门出发,途经故宫再到天坛的驾车路线,并告诉我总距离和顺序。"

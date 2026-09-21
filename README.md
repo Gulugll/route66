@@ -319,7 +319,7 @@ sequenceDiagram
 set -a; source .env; set +a
 export LLM_BASE_URL=https://api.deepseek.com   # 任选 OpenAI 兼容服务
 export LLM_API_KEY=sk-xxx
-export LLM_MODEL=deepseek-chat
+export LLM_MODEL=deepseek-flash                # 以服务方模型列表为准
 go run ./cmd/agent-demo "帮我规划一条从天安门出发,途经故宫再到天坛的驾车路线"
 ```
 
