@@ -5,27 +5,38 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"awesomeProject/internal/amap"
+	"awesomeProject/internal/geo"
 	"awesomeProject/internal/matrix"
 	"awesomeProject/internal/model"
 	"awesomeProject/internal/planner"
 )
 
+// placeSearcher 地名搜索的消费侧接口(与 api.Searcher 同型):
+// 搜索与"距离/轨迹来源"是两个生命周期独立的来源 —— valhalla 只管距离,
+// 搜索必须走 photon/nominatim。定义在消费侧,agent 包不依赖具体实现。
+type placeSearcher interface {
+	SearchPlaces(keyword, city string, limit int) ([]model.Place, error)
+}
+
 // RouteTools 将本项目的业务能力封装为 agent 工具。
 // 校验、解算、降级等规则全部复用 planner.Compute 与 amap.Client,
 // 与同步接口、异步 worker 走同一条解算链,不复制业务逻辑。
-func RouteTools(m *matrix.Service, am *amap.Client) []Tool {
+// searcher 可为 nil:search_place 工具会返回"搜索来源未装配"的错误文本,
+// 模型可据此告知用户,循环不中断(与未知工具同一处理哲学)。
+func RouteTools(m *matrix.Service, src geo.Source, searcher placeSearcher) []Tool {
 	return []Tool{
-		&searchPlaceTool{am: am},
-		&planRouteTool{m: m, am: am},
+		&searchPlaceTool{searcher: searcher},
+		&planRouteTool{m: m, src: src},
 	}
 }
 
 // searchPlaceTool 按关键词搜索地点,返回含坐标的候选列表。
 // agent 的典型流程是先搜索拿到 lat/lng,再交给规划工具。
+// ⚠️ 搜索走 searcher(photon/nominatim),绝不走 src(valhalla)——
+// valhalla 不提供搜索能力,曾经因为误接它让 RouteBot 查任何地点都报错。
 
 type searchPlaceTool struct {
-	am *amap.Client
+	searcher placeSearcher
 }
 
 type searchPlaceInput struct {
@@ -63,7 +74,10 @@ func (t *searchPlaceTool) Run(ctx context.Context, input json.RawMessage) (strin
 		limit = 10
 	}
 
-	places, err := t.am.SearchPlaces(in.Keyword, in.City, limit)
+	if t.searcher == nil {
+		return "", fmt.Errorf("地点搜索失败: 搜索来源未装配(需要 SEARCH_SOURCE 配 photon 或 nominatim)")
+	}
+	places, err := t.searcher.SearchPlaces(in.Keyword, in.City, limit)
 	if err != nil {
 		return "", fmt.Errorf("地点搜索失败: %w", err)
 	}
@@ -78,8 +92,8 @@ func (t *searchPlaceTool) Run(ctx context.Context, input json.RawMessage) (strin
 // 未配置 AMAP_KEY 时 Compute 自动走 haversine,结果中的警告原样交给模型。
 
 type planRouteTool struct {
-	m  *matrix.Service
-	am *amap.Client
+	m   *matrix.Service
+	src geo.Source
 }
 
 type planRouteInput struct {
@@ -136,7 +150,7 @@ func (t *planRouteTool) Run(ctx context.Context, input json.RawMessage) (string,
 		points = append(points, model.Point{Name: p.Name, Lat: p.Lat, Lng: p.Lng})
 	}
 
-	result, err := planner.Compute(points, mode, in.Manual, nil, t.m, t.am)
+	result, err := planner.Compute(points, mode, in.Manual, nil, t.m, t.src)
 	if err != nil {
 		return "", err
 	}

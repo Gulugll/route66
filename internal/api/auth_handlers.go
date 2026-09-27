@@ -23,6 +23,15 @@ import (
 // 注册成功再让人打一遍密码是纯折磨,业界主流做法也是注册即登录。
 // 复用 Login 而不是另写一份"发会话"逻辑:登录的入口永远只有一个。
 func (s *Server) register(c *gin.Context) {
+	// 限流闸门放在一切之前(含参数绑定)——坏请求也别想消耗服务端资源。
+	// 复用 LoginLimiter 类型:注册没有"失败"语义,Check 放行 + 成功后 Reset 即可。
+	if s.registerLimiter != nil {
+		if err := s.registerLimiter.Check(c.Request.Context(), c.ClientIP()); err != nil {
+			c.Header("Retry-After", "60")
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -47,6 +56,9 @@ func (s *Server) register(c *gin.Context) {
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
+	if s.registerLimiter != nil {
+		s.registerLimiter.Reset(c.Request.Context(), c.ClientIP())
+	}
 	s.loginAndStartSession(c, req.Username, req.Password)
 }
 
@@ -67,10 +79,16 @@ func (s *Server) login(c *gin.Context) {
 // token 只进 HttpOnly cookie,**绝不**放进 JSON body —— 一旦进了 body,
 // 前端就得存 localStorage,XSS 一偷一个准,HttpOnly 的意义就没了。
 func (s *Server) loginAndStartSession(c *gin.Context, username, password string) {
-	u, token, err := s.auth.Login(c.Request.Context(), username, password)
+	u, token, err := s.auth.Login(c.Request.Context(), c.ClientIP(), username, password)
 	if err != nil {
 		if errors.Is(err, auth.ErrBadCredentials) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			return
+		}
+		// 限速:密码还没校验就被闸门拦下,429 + Retry-After 提示稍后再试
+		if errors.Is(err, auth.ErrLoginThrottled) {
+			c.Header("Retry-After", "60")
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
 			return
 		}
 		// 存储故障(数据库没起/连接断) → 503 + 固定文案,
@@ -105,6 +123,34 @@ func (s *Server) me(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"user": u})
+}
+
+// updateProfile 改昵称/简介(PATCH /auth/profile)。
+// 状态码翻译照 register 同一模式:校验失败 400,存储故障 503 + 固定文案。
+func (s *Server) updateProfile(c *gin.Context) {
+	u, ok := auth.CurrentUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
+		return
+	}
+	var req struct {
+		Nickname string `json:"nickname"`
+		Bio      string `json:"bio"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数格式错误"})
+		return
+	}
+	if err := s.auth.UpdateProfile(c.Request.Context(), u.ID, req.Nickname, req.Bio); err != nil {
+		if errors.Is(err, auth.ErrStorageUnavailable) {
+			log.Printf("[auth] profile storage error: %v", err)
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "服务暂时不可用，请稍后重试"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 // publicConfig 下发浏览器渲染地图需要的公开配置(JS key + 安全密钥)。

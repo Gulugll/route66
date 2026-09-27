@@ -50,5 +50,11 @@ export function useAuth() {
     setUser(null)
   }, [])
 
-  return { user, ready, login, register, logout }
+  // 资料修改后的本地同步:后端已落库,这里只更新缓存里的用户对象。
+  // 与 fetchMe 重查等价但省一次往返;字段来源是"用户刚提交的内容+上传返回的 URL"。
+  const updateUser = useCallback((patch) => {
+    setUser((u) => (u ? { ...u, ...patch } : u))
+  }, [])
+
+  return { user, ready, login, register, logout, updateUser }
 }

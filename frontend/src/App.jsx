@@ -17,36 +17,43 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { AgentPane } from './components/AgentPane.jsx'
+import { CommunityView } from './components/CommunityView.jsx'
 import { LoginPage } from './components/LoginPage.jsx'
 import { MapView } from './components/MapView.jsx'
 import { PlanStrip } from './components/PlanStrip.jsx'
+import { ProfileDialog } from './components/ProfileDialog.jsx'
+import { ShareDialog } from './components/ShareDialog.jsx'
 import { TopBar } from './components/TopBar.jsx'
 import { ToastStack } from './components/ui.jsx'
 
-import { useAmap } from './hooks/useAmap.js'
+import { useLeaflet } from './hooks/useLeaflet.js'
 import { useAuth } from './hooks/useAuth.js'
 import { usePlan } from './hooks/usePlan.js'
 import { usePoints } from './hooks/usePoints.js'
-import { useSettings } from './hooks/useSettings.js'
 import { useToasts } from './hooks/useToasts.js'
 
 import { MAX_POINTS_BATCH, MAX_POINTS_PAIRWISE } from './theme.js'
 
 export default function App() {
   // ── 各个 hook 管自己那一块 ──
-  const { mapKey, jscode } = useSettings()
   const { points, addPoint, removePoint, movePoint, setLegMode, replacePoints, clearPoints } =
     usePoints()
   const plan = usePlan()
   const { toasts, push, dismiss } = useToasts()
   const auth = useAuth()
-  const amap = useAmap(mapKey, jscode)
+  const mapApi = useLeaflet()
 
   const [manual, setManual] = useState(false)
   // 自动模式的全局出行方式(交给后端 mode 字段);手动模式下即时应用到全部路段
   const [mode, setMode] = useState('driving')
   // Agent 面板开合:面板上的"收起"与地图上的浮动入口共享这一个状态
   const [agentOpen, setAgentOpen] = useState(true)
+  // 账号资料弹层(M1 社区身份层):TopBar 的用户名按钮打开
+  const [profileOpen, setProfileOpen] = useState(false)
+  // 顶层视图:planner(规划工作台) | community(社区)。无路由库,
+  // 与登录墙同一套"状态决定渲染哪棵子树"的模式 —— 两个视图就别引 router 了。
+  const [view, setView] = useState('planner')
+  const [shareOpen, setShareOpen] = useState(false)
 
   // ── 提示条 ──
   // useCallback 包一层，是为了让这个函数的**引用保持稳定**。
@@ -100,6 +107,23 @@ export default function App() {
       push('RouteBot 的方案已同步到规划带', 'info')
     },
     [replacePoints, plan, push]
+  )
+
+  // ── 社区:把别人的路线快照"落"进规划器 ──
+  // replacePoints 逐点恢复 name/lat/lng/legMode(段方式跟着点走,与分享时一致);
+  // 换数据后 [points] effect 会作废旧规划结果 —— 正确,导入的就是新路线。
+  // manual/mode 不恢复(YAGNI):用户导入后自己切,快照的 points 已足够复现路线。
+  const handleImportSnapshot = useCallback(
+    (snapshot) => {
+      if (!snapshot?.points?.length) {
+        push('这篇笔记没有可用的路线', 'error')
+        return
+      }
+      replacePoints(snapshot.points)
+      setView('planner')
+      push('已按社区路线开始规划,可继续调整', 'info')
+    },
+    [replacePoints, push]
   )
 
   // ── 「开始规划」的前置检查 ──
@@ -181,16 +205,35 @@ export default function App() {
     <div className="app">
       <TopBar
         user={auth.user}
+        view={view}
+        onNavView={setView}
+        onShare={() => {
+          if (points.length < 2) {
+            // 明确告诉用户"差什么、去哪补"—— 禁用按钮让人以为功能坏了
+            push('先加地点:在地图上点一下,或用搜索/手动输入,至少 2 个才能分享', 'info')
+            return
+          }
+          setShareOpen(true)
+        }}
         onLogout={async () => {
           await auth.logout()
           push('已退出登录', 'info')
         }}
+        onOpenProfile={() => setProfileOpen(true)}
       />
       <div className="hairline" />
 
-      <div className={`body${agentOpen ? '' : ' agent-hidden'}`}>
+      {view === 'community' ? (
+        <CommunityView
+          user={auth.user}
+          onBack={() => setView('planner')}
+          onImport={handleImportSnapshot}
+          onError={showError}
+        />
+      ) : (
+        <div className={`body${agentOpen ? '' : ' agent-hidden'}`}>
         <MapView
-          amap={amap}
+          mapApi={mapApi}
           points={points}
           segments={plan.segments}
           onAddFromMap={handleAddFromMap}
@@ -227,7 +270,33 @@ export default function App() {
           onClear={clearPoints}
           onError={showError}
         />
-      </div>
+        </div>
+      )}
+
+      {/* 分享到社区:把当前 points 序列化为快照发布;成功后进社区看自己的帖子 */}
+      {shareOpen && (
+        <ShareDialog
+          points={points}
+          manual={manual}
+          mode={mode}
+          onClose={() => setShareOpen(false)}
+          onPublished={(post) => {
+            setView('community')
+            push(`已发布「${post.title}」`, 'info')
+          }}
+          onError={showError}
+        />
+      )}
+
+      {/* 账号资料弹层:保存/上传成功即同步 user 缓存,下次打开就是新值 */}
+      {profileOpen && (
+        <ProfileDialog
+          user={auth.user}
+          onClose={() => setProfileOpen(false)}
+          onSaved={(patch) => auth.updateUser(patch)}
+          onError={showError}
+        />
+      )}
 
       {/* 提示条堆栈。渲染在最外层，用 position:fixed 浮在页面上方 ——
           这样它出现在哪里不受面板的 overflow 影响。 */}

@@ -1,16 +1,43 @@
-# 本地开发用的 PostgreSQL(2026-09-17 起,替代退役的 MySQL)。
+# 本地开发用基础设施(2026-09-27 起 MySQL 现役;同日已删除旧 PG 容器/卷/镜像)。
 # 用法:docker compose up -d   停止:docker compose down(加 -v 连数据卷一起删)
+# 注意:Go 服务本身不进 compose——用户习惯 go build 自己跑二进制占 7800,
+#       compose 只负责它依赖的外部组件。
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: routeplanner-pg
+  mysql:
+    image: mysql:8
+    container_name: routeplanner-mysql
+    # utf8mb4 是底线:昵称/帖子有中文与 emoji,默认字符集会变问号
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     environment:
-      POSTGRES_USER: routeplanner
-      POSTGRES_PASSWORD: routeplanner
-      POSTGRES_DB: routeplanner
+      MYSQL_ROOT_PASSWORD: routeplanner
+      MYSQL_DATABASE: routeplanner
+      MYSQL_USER: routeplanner
+      MYSQL_PASSWORD: routeplanner
     ports:
-      - "5432:5432"
+      - "3306:3306"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - mysqldata:/var/lib/mysql
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    container_name: routeplanner-redis
+    # 与此前源码编译版的启动参数保持一致:纯缓存/队列用,不开持久化
+    command: redis-server --save "" --appendonly no
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+  # 自托管距离来源(默认)。首次启动会用挂载目录里的 *.osm.pbf 自动建瓦片,
+  # 中国全量数据建片耗时较长(视机器 20-60 分钟),之后直接服务。
+  # 数据下载:scripts/fetch-osm.sh
+  valhalla:
+    image: ghcr.io/gis-ops/docker-valhalla/valhalla:latest
+    container_name: routeplanner-valhalla
+    environment:
+      server_threads: "2"
+    volumes:
+      - ./valhalla-data:/custom_files
+    ports:
+      - "8002:8002"
+    restart: unless-stopped
 volumes:
-  pgdata:
+  mysqldata:

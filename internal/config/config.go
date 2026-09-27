@@ -10,13 +10,19 @@ type Config struct {
 	AmapJSKey string // 高德 JS API key 兜底(浏览器渲染地图用);同样 DB 优先
 	AmapJSSec string // JS key 的安全密钥兜底
 	RedisAddr string // Redis 地址
-	PGDSN     string // PostgreSQL 连接串;空 = 认证/异步任务/管理端不启用(同步 /plan 照常)
+	MySQLDSN  string // MySQL 连接串;空 = 认证/异步任务/管理端不启用(同步 /plan 照常)
 	AdminUser string // 管理员种子账号(P2 认证启用时,启动时确保存在)
 	AdminPass string
 
 	LLMBaseURL string // OpenAI 兼容服务地址;空 = agent 端点按缺省值兜底
 	LLMAPIKey  string // LLM 密钥;空 = /agent 返回 503
 	LLMModel   string // 模型名
+
+	DistanceSource string // 距离来源:valhalla(默认)| amap(遗留门控)
+	ValhallaURL    string // Valhalla 根地址(自托管)
+	SearchSource   string // 搜索来源:photon(默认,公网可达)| nominatim
+	PhotonURL      string // Photon 根地址(可自托管)
+	NominatimURL   string // Nominatim 根地址(可自托管)
 }
 
 func Load() Config {
@@ -27,13 +33,19 @@ func Load() Config {
 		AmapJSKey: os.Getenv("AMAP_JS_KEY"),
 		AmapJSSec: os.Getenv("AMAP_JS_CODE"),
 		RedisAddr: getenv("REDIS_ADDR", "localhost:6379"),
-		PGDSN:     os.Getenv("PG_DSN"),
+		MySQLDSN:  os.Getenv("MYSQL_DSN"),
 		AdminUser: os.Getenv("ADMIN_USER"),
 		AdminPass: os.Getenv("ADMIN_PASSWORD"),
 
 		LLMBaseURL: os.Getenv("LLM_BASE_URL"),
 		LLMAPIKey:  os.Getenv("LLM_API_KEY"),
 		LLMModel:   os.Getenv("LLM_MODEL"),
+
+		DistanceSource: getenv("DISTANCE_SOURCE", "valhalla"),
+		ValhallaURL:    getenv("VALHALLA_URL", "http://localhost:8002"),
+		SearchSource:   getenv("SEARCH_SOURCE", "photon"),
+		PhotonURL:      getenv("PHOTON_URL", "https://photon.komoot.io"),
+		NominatimURL:   getenv("NOMINATIM_URL", "https://nominatim.openstreetmap.org"),
 	}
 }
 

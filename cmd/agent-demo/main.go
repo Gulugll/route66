@@ -16,9 +16,11 @@ import (
 	"time"
 
 	"awesomeProject/internal/agent"
-	"awesomeProject/internal/amap"
 	"awesomeProject/internal/cache"
+	"awesomeProject/internal/geo"
 	"awesomeProject/internal/matrix"
+	"awesomeProject/internal/photon"
+	"awesomeProject/internal/valhalla"
 )
 
 func main() {
@@ -45,13 +47,19 @@ func main() {
 	// 装配:复用 internal 的业务包,只取 agent 需要的最小集。
 	// 未配置 AMAP_KEY 时规划工具走 haversine,agent 会如实说明是直线估算。
 	distCache := cache.NewMemory(24 * time.Hour)
-	amapClient := amap.NewClient(os.Getenv("AMAP_KEY"), distCache)
-	matrixService := matrix.NewWithAmap(amapClient)
+	vURL := os.Getenv("VALHALLA_URL")
+	if vURL == "" {
+		vURL = "http://localhost:8002"
+	}
+	src := geo.Source(valhalla.NewClient(vURL, distCache))
+	matrixService := matrix.NewWithSource(src)
+	// 搜索与距离分离:search_place 走 photon(公网可达),距离/轨迹走 valhalla
+	searcher := photon.NewClient("https://photon.komoot.io")
 
 	brain := agent.NewOpenAICompatible(baseURL, apiKey, model)
 	a := &agent.Agent{
 		Model: brain,
-		Tools: agent.RouteTools(matrixService, amapClient),
+		Tools: agent.RouteTools(matrixService, src, searcher),
 		SystemPrompt: "你是路线规划助手 RouteBot。规则:" +
 			"① 凡涉及地点坐标,必须先用 search_place 查询,严禁编造坐标;" +
 			"② 规划路线一律用 plan_route 工具,不要自己心算;" +

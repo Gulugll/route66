@@ -10,16 +10,18 @@
 /**
  * 给后端的错误补上"该去哪儿修"。
  *
- * 后端报的是「未配置 AMAP_KEY,搜索不可用」—— 它诚实，但用户看完不知道下一步做什么。
- * 错误信息能被"行动"才算完整，所以在这里补一句。
- *
- * 放在 api.js 而不是组件里，是因为这个文件本来就是"错误归一化"的唯一出口
- * （见文件头），补一次，search / plan / route 三条路径全都受益。
+ * 错误信息能被"行动"才算完整:只报"失败"用户不知道下一步做什么,在这里补一句。
+ * 放在 api.js 而不是组件里,是因为这个文件本来就是"错误归一化"的唯一出口
+ * (见文件头),补一次,search / plan / route 三条路径全都受益。
  */
 const ERROR_HINTS = [
   [
-    '未配置 AMAP_KEY',
-    '后端要的是「Web服务」平台的高德 key（服务端环境变量 AMAP_KEY），不是浏览器里那把 JS key；见 README 的「高德 key」一节',
+    '路网距离获取失败',
+    '距离来源(Valhalla)不可用,结果已退化为直线估算;docker compose up -d valhalla 可拉起',
+  ],
+  [
+    '搜索服务未装配',
+    '后端未配置搜索来源(NOMINATIM_URL),见 README 部署一节',
   ],
 ]
 
@@ -152,6 +154,91 @@ export async function fetchMe() {
   return data.user
 }
 
+// ── 账号资料层（社区身份,M1）──
+
+/** 更新昵称与简介。超长等校验错误由后端返回 400 的中文消息。 */
+export function updateProfile(nickname, bio) {
+  return request('/auth/profile', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nickname, bio }),
+  })
+}
+
+/**
+ * 上传头像（multipart,字段名 file）。
+ * ⚠️ 不手动设 Content-Type —— 让浏览器自动生成带 boundary 的头,
+ * 手动写死 'multipart/form-data' 而不带 boundary 是经典翻车点。
+ * 返回 { avatar_url }。
+ */
+export function uploadAvatar(file) {
+  const body = new FormData()
+  body.append('file', file)
+  return request('/auth/avatar', { method: 'POST', body })
+}
+
+// ── 社区（路线笔记,M2/M3/M4）──
+// 后端契约:发布/删帖/点赞/评论要登录(cookie 自动带),浏览公开。
+
+/** 社区瀑布流。beforeId=游标(0/缺省=第一页),返回 { posts, next_cursor }。 */
+export function listCommunityPosts(beforeId, limit = 10) {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (beforeId) params.set('before_id', String(beforeId))
+  return request('/community/posts?' + params.toString())
+}
+
+/** 帖子详情(含完整路线快照)。返回 { post }。 */
+export function fetchPost(id) {
+  return request(`/community/posts/${id}`)
+}
+
+/** 发布路线笔记。snapshot 见 ShareDialog 的构造;imageUrls 是已上传的图片 URL 列表。 */
+export function publishPost(title, content, snapshot, imageUrls = []) {
+  return request('/community/posts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, content, image_urls: imageUrls, snapshot }),
+  })
+}
+
+/**
+ * 上传帖子图片(multipart,字段名 file)。返回 { url }。
+ * 与头像同一条上传通道:先传图拿到 URL,发布时把 URL 列表随帖子提交。
+ */
+export function uploadPostImage(file) {
+  const body = new FormData()
+  body.append('file', file)
+  return request('/community/images', { method: 'POST', body })
+}
+
+/** 删除自己的帖子(软删)。 */
+export function deletePost(id) {
+  return request(`/community/posts/${id}`, { method: 'DELETE' })
+}
+
+/** 点赞/取赞。幂等:重复调用不报错,返回 { liked, likes_count }。 */
+export function likePost(id) {
+  return request(`/community/posts/${id}/like`, { method: 'POST' })
+}
+
+export function unlikePost(id) {
+  return request(`/community/posts/${id}/unlike`, { method: 'POST' })
+}
+
+/** 评论列表(公开,时间升序)。返回 { comments }。 */
+export function fetchComments(id) {
+  return request(`/community/posts/${id}/comments`)
+}
+
+/** 发评论。返回 { comment }。 */
+export function addComment(id, content) {
+  return request(`/community/posts/${id}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  })
+}
+
 /**
  * 与 RouteBot 对话（NDJSON 流式）。
  *
@@ -200,19 +287,5 @@ export async function streamAgent(messages, { signal, onEvent } = {}) {
         // 单行解析失败跳过，不断流 —— 服务端保证每行都是完整 JSON，这里是防御
       }
     }
-  }
-}
-
-/**
- * 拉取管理员配置的 JS key / 安全密钥（公开接口，JS key 本来就暴露在浏览器里）。
- * 用于「localStorage 没有个人覆盖」时的默认值 —— 三层优先级的中间一层。
- * 拉不到（旧版后端 / 网络问题）返回 null，调用方静默回退到空态。
- */
-export async function fetchPublicConfig() {
-  try {
-    const data = await request('/config/public')
-    return data
-  } catch {
-    return null
   }
 }

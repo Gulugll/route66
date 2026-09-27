@@ -4,22 +4,22 @@ import (
 	"log"
 	"math"
 
-	"awesomeProject/internal/amap"
+	"awesomeProject/internal/geo"
 	"awesomeProject/internal/model"
 )
 
 // Service 负责回答"任意两点间距离是多少"(距离矩阵)。
-// 距离来源是可替换的:有高德客户端就优先用真实路网距离(带缓存),
-// 高德失败或没配 key 时自动降级回 haversine 直线距离,调用方无感知。
+// 距离来源是可替换的(geo.Source):装配了来源就用真实路网距离,
+// 来源失败或没装配时自动降级回 haversine 直线距离,调用方无感知。
 // 这就是"面向接口/依赖倒置":api 和 solver 只关心能拿到矩阵,不关心距离从哪来。
 type Service struct {
-	amap *amap.Client // 可空:没 key 或想纯直线时传 nil
+	src geo.Source // 可空:纯直线模式传 nil
 }
 
 func New() *Service { return &Service{} }
 
-// NewWithAmap 创建优先使用高德路网距离的服务。c 不能为 nil。
-func NewWithAmap(c *amap.Client) *Service { return &Service{amap: c} }
+// NewWithSource 创建优先使用真实路网距离的服务。src 不能为 nil。
+func NewWithSource(src geo.Source) *Service { return &Service{src: src} }
 
 // DistanceMatrix 返回 n×n 矩阵,dists[i][j] = 点 i 到 j 的距离(公里,按 mode 出行)。
 // 优先高德;任何一步出错就整体降级 haversine——矩阵要么全真实路网,
@@ -28,15 +28,15 @@ func NewWithAmap(c *amap.Client) *Service { return &Service{amap: c} }
 // 第二个返回值 degraded 表示"这张矩阵是不是降级来的",必须由上层一路带到
 // HTTP 响应里。降级不能只写日志:日志对用户不可见,直线估算值必须显式告知。
 func (s *Service) DistanceMatrix(points []model.Point, mode model.Mode) ([][]float64, bool) {
-	// HasAPIKey 是"此刻"的判断:未配 key 时走直线(设计如此,不算降级),
-	// 配了之后同一进程的下一次请求即走真实路网,动态 key 热生效到这层自然成立
-	if s.amap != nil && s.amap.HasAPIKey() {
-		dists, err := s.amap.DistanceMatrix(points, mode)
+	// HasAPIKey 是"此刻"的判断:来源没装配时走直线(设计如此,不算降级),
+	// 装配后同一进程的下一次请求即走真实路网。
+	if s.src != nil && s.src.HasAPIKey() {
+		dists, err := s.src.DistanceMatrix(points, mode)
 		if err == nil {
 			return dists, false
 		}
-		// 配了高德但调用失败
-		log.Printf("[matrix] amap %s failed (%v), falling back to haversine", mode, err)
+		// 配了来源但调用失败
+		log.Printf("[matrix] source %s failed (%v), falling back to haversine", mode, err)
 		return haversineMatrix(points), true
 	}
 	// 没配 key:直线距离即预期行为,不产生降级警告。

@@ -66,7 +66,7 @@ if [ "$me_code" = "401" ] || [ "$me_code" = "200" ]; then
   [ "$c0" = "401" ] && ok "未带 cookie 的 /plan → 401（API 级登录墙生效）" \
                    || bad "未带 cookie 的 /plan → ${c0}（期望 401,保护没挂上?）"
 elif [ "$me_code" = "404" ]; then
-  echo "  auth 未装配（PG_DSN 未配置），游客模式跑业务断言"
+  echo "  auth 未装配（MYSQL_DSN 未配置），游客模式跑业务断言"
 else
   bad "/auth/me 返回 ${me_code}（预期 401/200/404 之一）"
 fi

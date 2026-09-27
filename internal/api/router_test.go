@@ -82,7 +82,7 @@ func newTestRouter(t *testing.T, withAmap bool, failPaths ...string) *gin.Engine
 	srv := fakeAmapServer(t, failPaths...)
 	// nil 缓存:测试之间不共享缓存,避免互相"喂"出假的命中
 	am := amap.NewClientWithBase("test-key", srv.URL, nil)
-	return NewRouter(matrix.NewWithAmap(am), am, nil, nil)
+	return NewRouter(matrix.NewWithSource(am), am, nil, nil)
 }
 
 // doJSON 发一个请求,返回状态码和原始 body。

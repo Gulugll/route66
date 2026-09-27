@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"time"
 
-	"gorm.io/driver/postgres"
+	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -45,9 +45,9 @@ const (
 //   - CreatedAt/UpdatedAt 是 GORM 的约定字段名,建行/改行时自动填充
 type Task struct {
 	ID         int64     `gorm:"primaryKey;autoIncrement"`
-	ReqJSON    []byte    `gorm:"column:req_json;type:jsonb;not null"`
+	ReqJSON    []byte    `gorm:"column:req_json;type:json;not null"`
 	Status     string    `gorm:"column:status;type:varchar(16);default:queued;index:idx_status_created,priority:1"`
-	ResultJSON []byte    `gorm:"column:result_json;type:jsonb"`
+	ResultJSON []byte    `gorm:"column:result_json;type:json"`
 	Error      string    `gorm:"column:error;type:text"`
 	CreatedAt  time.Time `gorm:"column:created_at;index:idx_status_created,priority:2"`
 	UpdatedAt  time.Time `gorm:"column:updated_at"`
@@ -72,12 +72,14 @@ type GormTaskRepo struct {
 	db *gorm.DB
 }
 
-// NewGorm 建立 PostgreSQL 连接并返回仓库。
-// DSN 形如 host=localhost port=5432 user=xxx password=xxx dbname=routeplanner sslmode=disable。
-// 2026-09-17 从 MySQL 迁移时 repo 层业务代码零改动,只换了 driver 和
-// 两处方言标签(enum→varchar, json→jsonb),依赖接口抽象的收益。
+// NewGorm 建立 MySQL 连接并返回仓库。
+// DSN 形如 user:pass@tcp(127.0.0.1:3306)/routeplanner?charset=utf8mb4&parseTime=True&loc=Local。
+// parseTime=True 缺失时 time.Time 扫描直接报错(MySQL 驱动头号坑);charset/loc 缺省
+// 分别回退服务器字符集与 UTC,显式写死避免"本机正常、线上时区漂移"。
+// 方言标签迁徙史:enum→varchar(2026-09-17)、json→jsonb(同日)、jsonb→json(2026-09-27 切回
+// MySQL)—— 方言专属类型每次迁移都要付税,现在一律用可移植类型。
 func NewGorm(dsn string) (*GormTaskRepo, error) {
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
 		// GORM 默认日志在错误时才打,慢查询阈值保持默认
 		Logger: logger.Default.LogMode(logger.Warn),
 	})

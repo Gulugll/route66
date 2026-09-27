@@ -58,6 +58,178 @@
 
 ## 进度追踪
 
+### 2026-09-27（DSH 会话 · 八）— 社区图片功能 + 等高网格 ✅
+
+- **等高网格**：CSS columns 瀑布流 → `grid auto-fill minmax(220px,1fr)`，卡片三段式
+  （封面 150px 固定 + 标题两行截断 + meta 贴底 `margin-top:auto`）——四卡实测 223px 全等高
+- **图片上传**：
+  - posts 加 `image_urls json` 列，自定义 `StringList` 类型显式实现 Value/Scan
+    （不依赖 GORM 对切片的隐式序列化，跨驱动行为成契约）
+  - `saveUpload` 公共函数抽取（头像/帖子图共用三道防线）；`POST /community/images`
+  - **URL 前缀白名单**：image_urls 只收 `/uploads/posts/` 前缀（自家上传产物），
+    外链一律 400 —— XSS/盗链/任意 URL 的攻击面归零
+  - 先传图后发帖（标准做法）：弹窗选图即传、占位缩略图、单张失败不连坐；
+    发布只提交 URL 列表；上传未完发布按钮禁用并显示"上传中(n)"
+- 前端：ShareDialog 图片九宫格（＋选图/删除角标/计数）；卡片封面优先图、
+  多图显示 ▣ n 角标；详情单图通栏/多图两列网格
+- **agent-browser 终极大坑**：eval 顶层 `const` 在 daemon 全局上下文**持久驻留**，
+  后续同名声明静默 SyntaxError —— 症状是"DOM 明明在却查不到/操作无效"。
+  一切 eval 必须 IIFE 包裹；页面 reload 后 window 上的临时数据会丢
+- 验证：12 包 -race 全绿；浏览器实测 传图发布→网格封面图/▣2 角标→详情 2 图两列+地图
+
+**⏭️ 下次继续**：二期候选不变（Stream worker 异步计数/通知、关注流、热榜、话题标签）；
+图片可加缩略图（现在原图直出，列表页带宽浪费）
+
+### 2026-09-27（DSH 会话 · 七）— "分享不能用"排查 → 禁用按钮 UX 修复 ✅
+
+- 用户报"分享到社区不能用"。日志显示**后端从没收到 POST**——不是功能坏，
+  是**刚登录时按钮 disabled**（points<2）而禁用原因只有 hover title 才可见，
+  用户对着灰按钮点不动，合理地认为功能坏了
+- **修复（UX 原则：别让用户对禁用态猜原因）**：分享按钮永不禁用，
+  点了条件不满足 → toast 明确说"先加地点:在地图上点一下,或用搜索/手动输入,
+  至少 2 个才能分享"——给路走，不给墙撞
+- 浏览器复现验证：0 点点击出引导 toast → 加两点 → 弹层 → 发布 → 瀑布流出新卡片
+  （三帖三色站牌封面）
+- **通用教训**：按钮禁用要有"为什么"的可见出口;否则用户会报告"功能坏了"。
+  排查用户报障先看服务日志有没有对应请求——没有请求=问题在交互层不在后端
+
+### 2026-09-27（DSH 会话 · 六）— RouteBot 搜索修复 + 社区视觉精修 ✅
+
+- **agent 搜索修复**：`searchPlaceTool` 原来接 `geo.Source`(valhalla)，而 valhalla
+  不提供搜索 → RouteBot 查任何地点都报"valhalla 不提供搜索"。改为注入消费侧接口
+  `placeSearcher`(photon)，RouteTools 加第三参；planRouteTool 仍走 src(距离归 valhalla)。
+  **教训：search(地名→坐标) 和 distance(坐标→距离) 是两个独立来源，工具注入时别混**
+- **社区视觉精修**（frontend-design skill 流程：先计划对照 generic 检查再动手）：
+  - 卡片封面从 hsl 浓渐变（AI 生成页默认病）改为**站牌式线稿**：起点名—虚线—终点名，
+    底色=id 派生同色相极浅底(93%)配深字(30%)，诚实且有主题性
+  - 详情排版：21px 标题负字距、byline 去 middle-dot 拼接改纯间距、like 按钮圆角化
+    （已赞墨底白字）、数字 tabular-nums、地图 260px
+  - 顶栏视图导航改**墨色下划线 tab**（当前视图语义），弃药丸底
+  - hover 纪律：卡片只动边框+标题变色，不用"位移+阴影"通用组合
+- agent-browser 坑再补：daemon 空闲后会回收页面，snapshot 前必须 `open` 重挂；
+  ref 每次渲染漂移，动态解析 ref 再操作比硬编码可靠
+- 验证：12 包全绿、npm build 过、浏览器截图确认（瀑布流站牌封面 + 详情排版）
+- **服务在 7800 跑着给用户试用**（/tmp/rp-final，后台任务）；7801 管理端
+
+### 2026-09-27（DSH 会话 · 五）— M4 前端社区完成 ✅ 社区功能全量闭环 🎉
+
+- **视图切换无 router**：App 顶层 `view: 'planner'|'community'` 状态决定渲染子树，
+  与登录墙同一模式 —— 两个视图不值得引 react-router
+- **新组件**：
+  - `CommunityView`（列表+详情二级导航在组件内部 state）：CSS columns 双列瀑布流、
+    卡片封面色相 = `(id*137)%360` 黄金角派生（同一帖恒同色）、游标"加载更多"、空态引导
+  - `PostMap`：复用 useLeaflet 画快照（circleMarker+常开 tooltip+分段直线按 legMode
+    配 MODE_COLORS + fitBounds）—— 快照只有点位,画直线段而非调 /route（详情页语义
+    是"路线长什么样",真实路网留给规划器）
+  - `ShareDialog`：标题/正文表单 + 快照序列化（manual 模式没有全局方式,mode 用第一段
+    方式占位,注释写明"导入只用 points"）
+- **导入闭环**：详情「按此路线开始规划」→ replacePoints(快照 points) + 切回规划视图;
+  [points] effect 自动作废旧规划结果 —— 正确行为无需 skipPlanReset
+- **实测抓到的真 bug**：后端返回的 snapshot 已是对象,前端又 JSON.parse(对象) →
+  先被 toString 成 "[object Object]" 必抛错 → 详情页"未携带快照"。修复:按类型分派。
+  agent-browser 实测修复后地图正常渲染
+- **浏览器全链路实测通过**（m3a 发帖→瀑布流卡片色相/作者/赞数正确→详情地图重绘→
+  点赞 0→1→评论"评论 1"→ 切 m3b 看到导入按钮→导入后规划页标记 1/2 落位天安门/天坛）
+- agent-browser 坑：连续 type 快了会串位(用 fill);长会话 daemon 会僵死(SIGTERM 137),
+  close 重开即可;ref 会随重渲染漂移,每次操作前重新 snapshot -i
+
+**⏭️ 社区功能已闭环**（M1 资料→M2 帖子→M3 互动→M4 前端）。二期候选（规格 §10）：
+点赞/评论事件接 Stream worker 异步计数+通知、关注流、热榜、图片上传替换 CSS 封面、
+话题标签。回归基线：`go test -race ./...` 全绿 + `npm run build` 通过
+
+### 2026-09-27（DSH 会话 · 四）— M3 互动层完成 ✅（点赞/评论/计数事务）
+
+- **post_likes 复合主键 `(user_id, post_id)`**：防重复赞的唯一防线是**数据库约束**，
+  不是先查再插（并发下必现双插）；重复 INSERT(1062) 翻译成幂等放行，不报错
+- **事务语义**：点赞 = 插行 + `likes_count+1` 同事务（gorm.Expr 原子自增，
+  UpdateColumn 绕过 hooks）；取赞 = **删了行才减计数**（RowsAffected 守卫防负数）；
+  评论同理。计数与事实源(行数)永不漂移
+- **is_liked 批量回填**：ListPosts/Detail 加 viewerID 参数（0=游客），
+  页内一次 `IN` 查询回填，绝不逐帖查（N+1 杀手）；回填失败静默降级为全 false
+- **路由**：like/unlike/comments-post 登录；评论列表 GET 公开
+- **真库翻车一次**：Migrate 忘了加 PostLike/Comment → 单测全绿、真库 503
+  (Table doesn't exist)。教训写进 Migrate 注释：**新增实体必须加进 AutoMigrate 列表**，
+  内存 fake 不建表，这类错误只有真库验证能抓到
+- **变异验证**：去掉 Unlike 的 RowsAffected 守卫 → 测试红（重复取赞把计数减没了）
+- 验证：`go test -race ./...` 全绿；真 MySQL 全链路：A赞→重复赞幂等→B赞=2→
+  B评论入库→B视角 is_liked=true/游客 false→A取赞=1→重复取赞幂等
+
+**⏭️ 下次继续**：M4 前端社区——`/community` 双列瀑布流（CSS columns）+ 详情页
+（Leaflet 按 snapshot 重绘路线）+ 规划页"分享到社区"入口 + "按此路线开始规划"导入 +
+点赞/评论交互（Avatar 组件 M1 已备好）
+
+### 2026-09-27（DSH 会话 · 三）— M2 帖子与快照完成 ✅（社区核心落地）
+
+- **新包 `internal/community`**（entity/repo/service/memstore，照 auth 三层惯例）：
+  - `Post`：plan_snapshot 为 **json 列存规范化快照**（发布时校验+补 version，读侧信任写侧）；
+    `origin_name/dest_name` 冗余列（列表页不解析 JSON）；计数冗余列 M3 启用；gorm.DeletedAt 软删
+  - 快照校验收口 `validateSnapshot`：**DisallowUnknownFields**（字段拼错发布时就报）、
+    mode/legMode 与 /plan 同一白名单（driving/walking/transit）、点 2~50、坐标越界 400、≤64KB
+  - 游标分页用 **limit+1 探测法**：多取一条判断有无下一页，满页不再逼前端拉空页
+  - `MemStore` 导出（放正式文件而非 _test.go：Go 测试符号跨包不可见），api 契约测试共用
+- **路由**：`/community/posts`（POST 登录 / GET 公开）、`/community/posts/:id`（GET 公开 /
+  DELETE 仅作者）——不带 `/api` 前缀，规格 §5 已修正（与 /plan、/auth/* 同一约定）；
+  `WithCommunity` Option，community+auth 都装配才注册（少一个都是半功能）
+- **大坑（写注释钉死）**：GORM 软删自动过滤只在挂 `Model()` 时生效，
+  `Table("posts")+JOIN+自定义列` 查询必须**手写 `deleted_at IS NULL`**——漏了删帖会"诈尸"且无报错
+- **测试坑**：从 sessions map 取"任意 token"赋给两个测试用户,map 遍历随机导致
+  cookieB 拿到 A 的会话（403 断言假绿/假红）——必须按用户名精确定位
+- **验证**：`go test -race ./...` 全绿（community 20+ 用例含坏快照逐一 400、非作者 403、
+  游标三页）;真 MySQL 链路:发布(version 规范化)→游客列表(JOIN 作者)→详情→游客 401→
+  作者删 200→详情 404 全通
+
+**⏭️ 下次继续**：M3 互动——post_likes（(user_id,post_id) 复合主键防重复赞）+ comments，
+点赞/评论与计数**同事务**；is_liked 批量回填（页内一次 IN 查询）
+
+### 2026-09-27（DSH 会话 · 二）— M1 账号资料层完成 ✅ + 旧 PG 彻底删除
+
+- **旧 PG 清理**：容器/数据卷/镜像/compose 定义全删（用户拍板），MySQL 是唯一事实源
+- **后端（全部 TDD）**：
+  - `users` 加列 `nickname/avatar_url/bio`（可空，AutoMigrate 自动加列，`/auth/me` 响应自动带出）
+  - `auth.Store` 接口 + GormStore + fake 各加 `UpdateProfile`/`SetAvatarURL`；
+    GORM `Updates` 必须 `map[string]any`（struct 会跳过零值字段——清空昵称会被静默忽略）
+  - `Service.UpdateProfile/SetAvatarURL`：rune 计数校验（昵称≤32/简介≤200），ErrNotFound 透传
+  - 注册限流：`WithRegisterLimiter` Option，**复用 LoginLimiter 类型第二实例**（5 次/时/IP）；
+    闸门在参数绑定之前，拒绝时不碰用户表；Redis 缺席 fail open
+  - 头像上传 `POST /auth/avatar`（`internal/api/upload.go`）：MaxBytesReader 10MB →
+    DetectContentType 嗅探魔数（假扩展名 virus.exe 放行、文本 400）→ userID 子目录落盘；
+    库写失败删孤儿文件；`router.Static("/uploads", ".run/uploads")` 公开托管
+  - `PATCH /auth/profile`：错误翻译照 register 模式（校验 400/存储 503 固定文案）
+- **前端**：`ProfileDialog.jsx`（Esc 关闭/头像预览/表单校验，复用 overlay/dialog/field 样式）+
+  `Avatar` 组件（M2 社区卡片复用）；`api.js` 加 `updateProfile/uploadAvatar`
+  （multipart 不手动设 Content-Type）；TopBar 昵称回退 username + 点开资料弹层；
+  `useAuth.updateUser` 本地同步
+- **验证**：`go test -race ./...` 全绿；真服务链路（注册带新字段→PATCH 资料→传真 PNG→
+  `/uploads/...` 200 image/png→me 回显→超长 400）全通；`npm run build` 过
+- **坑**：本会话 shell 有 HTTP_PROXY，curl 本机要 `--noproxy '*'`；`&` 起的服务随 shell
+  退出（长跑必须用持久后台任务）
+
+**⏭️ 下次继续**：M2 帖子与快照——新建 `internal/community`（posts 表 + plan_snapshot
+校验收口 + 游标分页），照规格 §3.2/§4/§5 做；Store 接口 + 内存 fake 照 auth 惯例
+
+### 2026-09-27（DSH 会话）— M0 全项目 PG→MySQL 切换完成 ✅（社区模块启动）
+
+背景：计划给项目加小红书式社区 Feed（路线笔记），借鉴 `GolandProjects/feedsystem_video_go`。
+规格与计划：`docs/superpowers/specs/2026-09-27-community-feed-design.md` +
+`docs/superpowers/plans/2026-09-27-m0-mysql-migration.md`、`plans/2026-09-27-m1-profile-layer.md`。
+
+- **定案**：数据库全项目切回 **MySQL 8**（docker `routeplanner-mysql`，3306，utf8mb4，
+  compose 里 PG 转 `profiles: ["legacy"]` 保留数据卷可回退）。红线：社区表必须与 users
+  同库（JOIN/事务），"只社区切 MySQL"不可行
+- **改动**：repo.go 驱动 + `jsonb`→`json`；`PG_DSN`→`MYSQL_DSN`（config/main.go/注释/.env）；
+  auth.go 唯一键冲突判定改 `errors.As(*mysql.MySQLError)` 判 1062（原字符串匹配是 PG
+  文案，换库即失效；TDD + 变异验证过）
+- **验证**：注册→重名 409→登录→me→异步 /plans done（GORM+Stream 全链路）→管理端
+  7801→settings 表读写；`go test -race ./...` 全绿。冒烟注意：smoke.sh 是 amap 模式专用，
+  当前 distance source=valhalla（未起容器），跳过属预期
+- **MySQL DSN 三参数**：`parseTime=True`（缺了 time.Time 扫描报错）+ `charset=utf8mb4` + `loc=Local`
+- **教训再验证**：方言专属类型（enum/jsonb）每次换库都付税——现在一律可移植类型；
+  Repository 模式这次兑现"换存储调用方零改动"，触碰点仅 6 处
+
+**⏭️ 下次继续**：M1 资料层（users 加列 nickname/avatar_url/bio + 头像上传 + 注册限流，
+计划已写到任务级，照 `plans/2026-09-27-m1-profile-layer.md` 从任务 1 开始）→
+M2 帖子快照 → M3 互动 → M4 前端瀑布流
+
 ### 2026-09-19（DSH 会话）— 手写 ReAct 智能体循环打通（未接真 LLM）✅
 
 用户想用 Go 构建 agent（对比过 Python deepagents，定案：留在 Go 技术栈、

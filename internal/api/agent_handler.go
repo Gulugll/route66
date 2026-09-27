@@ -107,8 +107,9 @@ func (s *Server) agentChat(c *gin.Context) {
 		model = agent.NewOpenAICompatible(baseURL, apiKey, modelName)
 	}
 	a := &agent.Agent{
-		Model:         model,
-		Tools:         agent.RouteTools(s.matrix, s.amap),
+		Model: model,
+		// 搜索与距离是两个来源:search_place 走 searcher(photon),距离走 src(valhalla)
+		Tools:         agent.RouteTools(s.matrix, s.src, s.searcher),
 		SystemPrompt:  agentSystemPrompt,
 		MaxIterations: 8,
 		// OnStep 在 Run 的同一 goroutine 里被调用,直接写响应流是安全的;

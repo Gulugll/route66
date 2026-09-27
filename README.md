@@ -2,11 +2,11 @@
 
 **多点路线规划服务 · Go · React 19 · 手写 TSP · 内置 ReAct 智能体**
 
-`Go` · `Gin` · `高德地图` · `手写TSP` · `Redis` · `React 19` · `ReAct Agent`
+`Go` · `Gin` · `OpenStreetMap` · `Valhalla` · `手写TSP` · `Redis` · `React 19` · `ReAct Agent`
 
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev/)
 [![Gin](https://img.shields.io/badge/Gin-1.12-008ECF?style=for-the-badge&logo=gin&logoColor=white)](https://gin-gonic.com/)
-[![高德](https://img.shields.io/badge/高德地图-API-red?style=for-the-badge&logo=amazonaws&logoColor=white)](https://lbs.amap.com/)
+[![OpenStreetMap](https://img.shields.io/badge/OpenStreetMap-Valhalla-7EBC6F?style=for-the-badge&logo=openstreetmap&logoColor=white)](https://www.openstreetmap.org/)
 [![Redis](https://img.shields.io/badge/Redis-7-DC382D?style=for-the-badge&logo=redis&logoColor=white)](https://redis.io/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 
@@ -55,7 +55,7 @@ Route66 是一个多点路径规划服务：输入一串地点，自动计算总
                     └──────────────────────────────┘
 ```
 
-分层设计：`api`(编排) / `matrix`(距离来源) / `solver`(TSP) / `amap`(高德客户端) /
+分层设计：`api`(编排) / `matrix`(距离来源) / `solver`(TSP) / `geo`(来源接口) /
 `cache`(缓存抽象)——低耦合，面向接口。距离来源、求解算法、缓存实现的替换均不影响调用方。
 
 **包依赖关系**（单向无环，`internal/` 强制封装）：
@@ -103,57 +103,38 @@ graph LR
 - （可选）Node 20+ —— 仅构建/修改前端时需要（源码在 `frontend/`）
 - （可选）PostgreSQL —— 启用认证、异步任务与管理台
 
-### 1. 申请高德 key
+### 1. 下载地图数据（Valhalla）
 
-高德开放平台 [console.amap.com](https://console.amap.com) → 实名认证 → 创建应用。
+默认距离来源是自托管的 [Valhalla](https://github.com/valhalla/valhalla)（OpenStreetMap 路网），
+不需要申请任何 key：
 
-高德按「服务平台」分权：一个应用下申请一把 key，在「服务平台」里同时勾选两项即可。
-
-| 平台 | 用途 | 配置位置 |
-|---|---|---|
-| **Web服务** | 后端距离 / 搜索 / 路网轨迹（REST） | 服务端环境变量 `AMAP_KEY` |
-| **Web端(JS API)** | 浏览器渲染地图 | 管理台配置，经 `/config/public` 下发 |
-
-**安全密钥**：2021-12-02 之后申请的 key，JS API 2.0 强制要求。典型现象是地图能渲染，
-但搜索、距离类接口报 `INVALID_USER_SCODE`。
-
-**报错码对照**：
-
-| 高德返回 | 含义 | 处理 |
-|---|---|---|
-| `INVALID_USER_KEY` (10001) | key 不存在 | 核对 key，或确认未被删除 |
-| `USERKEY_PLAT_NOMATCH` (10009) | key 未绑定目标平台 | 控制台为该 key 追加对应平台 |
-| `INVALID_USER_SCODE` | 缺安全密钥 | 在 JS key 配置处一并填入 |
+```bash
+bash scripts/fetch-osm.sh   # 下载中国 OSM 提取数据（约 1.1GB，只需一次）
+```
 
 ### 2. 启动
 
 ```bash
-# 起 Redis(可选)
-redis-server --port 6379 &
+# 配置：复制示例即可，默认值可直接跑（零 key 零注册）
+cp .env.example .env
+
+# 起外部依赖（Valhalla + PostgreSQL + Redis；后两者可选，不装也能跑）
+docker compose up -d
 
 # 起后端
-export AMAP_KEY=你的Web服务key
+set -a; source .env; set +a
 go run .
 
 # 打开页面
 open http://localhost:7800
 ```
 
+> Valhalla 容器首次启动会自动建瓦片（视机器 20~60 分钟），期间 `/plan` 会返回
+> 直线估算并在 `is_degraded` 显式标注；瓦片就绪后自动恢复真实路网，无需重启。
+
 ### 2.5 登录系统 + 管理台（PostgreSQL，可选）
 
-配置数据库后启用认证与管理能力；不配置则全部不启用，同步规划不受影响。
-
-```bash
-docker compose up -d          # postgres:16-alpine, 5432
-
-# .env 追加:
-# PG_DSN=postgres://routeplanner:routeplanner@localhost:5432/routeplanner?sslmode=disable
-# ADMIN_PORT=7801
-# ADMIN_USER=admin
-# ADMIN_PASSWORD=改成你自己的
-
-go run .
-```
+`docker compose up -d` 已同时拉起 PostgreSQL 与 Redis。配置数据库后启用认证与管理能力；不配置则全部不启用，同步规划不受影响。
 
 | 端口 | 内容 |
 |---|---|
@@ -194,6 +175,46 @@ npm run dev        # http://localhost:5173, /plan /search /route 已代理到 78
 >
 > Go 侧托管逻辑在 `router.go`：`r.NoRoute(http.FileServer(http.Dir("web")))`，
 > 产物落在 `web/` 即出现在根路径，无需新增路由。
+
+## 部署
+
+`docker compose up -d` 已覆盖全部外部依赖，应用本身是单个 Go 二进制 + 静态前端：
+
+```bash
+# 0. 距离数据（首次部署需要，约 1.1GB）
+bash scripts/fetch-osm.sh
+
+# 1. 前端构建（产物在 web/，由 Go 托管，不进仓库）
+cd frontend && npm install && npm run build
+
+# 2. 编译后端
+go build -o route66 .
+
+# 3. 带配置启动（端口、key、数据库连接都来自环境变量）
+cp .env.example .env   # 编辑后：
+set -a; source .env; set +a
+./route66
+```
+
+对公网开放时：
+
+- 前面加一层反向代理（Nginx / Caddy）做 TLS；`ADMIN_PASSWORD` 务必换强密码
+- **key 自备（BYOK）**：每个部署者使用自己申请的高德 key，调用成本与合规责任都落在部署者一侧，项目本身不代理、不转售任何地图服务
+- PostgreSQL 数据在 compose 卷 `pgdata` 中，`docker compose down -v` 才会删除
+
+## 距离与搜索来源
+
+| 能力 | 默认 | 遗留可选 | 全部失败时 |
+|---|---|---|---|
+| 距离矩阵 / 路网轨迹 | Valhalla（自托管，`VALHALLA_URL`） | 高德（`DISTANCE_SOURCE=amap` + `AMAP_KEY`） | haversine 直线估算，`is_degraded=true` |
+| 地名搜索 | Photon 公共实例（`PHOTON_URL`，大陆网络可达；`SEARCH_SOURCE=nominatim` 可切 Nominatim） | — | 502，错误信息可行动 |
+| 公交模式 | 无开源路网，自动降级直线估算并逐段标注 | 高德真实公交距离 | 同左 |
+
+坐标系统一为 WGS-84：OSM 数据、Leaflet 底图、Valhalla 引擎三者同系，
+全链路无 GCJ-02 偏移转换。坐标经纬顺序对外契约不变（`/route` 经度在前）。
+
+高德作为遗留来源保留：`internal/amap` 及其测试原样可用，`DISTANCE_SOURCE=amap`
+时切回（key 从管理台 DB 读取，env 兜底，改 key 不重启生效）。
 
 ## API
 
@@ -572,14 +593,12 @@ route66/
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| 搜索返回「未配置 AMAP_KEY,搜索不可用」 | 后端启动时未读到 `AMAP_KEY` | `export AMAP_KEY=...` 后重启后端 |
-| 后端报 `USERKEY_PLAT_NOMATCH`(10009) | 使用了未绑定 Web服务平台的 key | 控制台为该 key 追加「Web服务」平台 |
-| 地图空白，提示「还没配置高德 Key」 | 当前浏览器未获取 JS key | 管理台配置后刷新页面 |
-| 地图正常但搜索失败（`INVALID_USER_SCODE`） | 缺安全密钥 | 在 JS key 配置处补填 |
-| 总距离明显偏小、呈直线 | 后端降级到 haversine | 查看响应的 `is_degraded` 与 `degraded` |
-
-分工：**服务端 `AMAP_KEY` = 距离、搜索、轨迹；JS key = 地图渲染**。
-两把 key 可合并为一把（同一 key 勾选两个平台）。
+| 总距离明显偏小、呈直线，`is_degraded=true` | Valhalla 未启动 / 瓦片还在构建 | `docker compose up -d valhalla`，等待建片完成 |
+| `/plan` 报「距离来源不可用,混合出行不可用」 | 距离来源未装配 | 配置 `VALHALLA_URL` 或切 `DISTANCE_SOURCE=amap` |
+| `/search` 报「搜索服务未装配」 | 后端未配置搜索来源 | 确认 `SEARCH_SOURCE` / `PHOTON_URL`（默认公共实例，无需配置） |
+| 地图空白 | 瓦片服务被网络拦截 | 换 `VITE_TILE_URL`（前端构建期环境变量，任意 XYZ 源均可） |
+| 搜索结果少/偏 | Nominatim 对中文 POI 覆盖有限 | 加 `city` 参数限定；或后续自托管 Photon |
+| 高德模式报 `USERKEY_PLAT_NOMATCH`(10009) | key 未绑定 Web服务平台 | 控制台为该 key 追加「Web服务」平台 |
 
 ## License
 

@@ -9,11 +9,16 @@ import (
 	"awesomeProject/internal/api"
 	"awesomeProject/internal/auth"
 	"awesomeProject/internal/cache"
+	"awesomeProject/internal/community"
 	"awesomeProject/internal/config"
+	"awesomeProject/internal/geo"
 	"awesomeProject/internal/matrix"
+	"awesomeProject/internal/nominatim"
+	"awesomeProject/internal/photon"
 	"awesomeProject/internal/queue"
 	"awesomeProject/internal/repo"
 	"awesomeProject/internal/settings"
+	"awesomeProject/internal/valhalla"
 	"awesomeProject/internal/worker"
 )
 
@@ -21,7 +26,7 @@ import (
 // 外部依赖没配/挂了,对应功能降级/不启用,服务其余部分照常跑:
 //  1. 缓存:优先 Redis(跨重启/多实例共享),连不上降级进程内 map
 //  2. 距离:高德客户端常驻,key 动态取(管理端 DB > env 兜底),没 key 走 haversine
-//  3. 数据库:配了 PG_DSN 才启用认证/异步任务/管理端;没配则同步 /plan 照常
+//  3. 数据库:配了 MYSQL_DSN 才启用认证/异步任务/管理端;没配则同步 /plan 照常
 //  4. 管理端:独立端口(7801)单独一个引擎,和用户端(7800)同进程
 func main() {
 	cfg := config.Load()
@@ -38,30 +43,51 @@ func main() {
 		log.Printf("redis cache enabled at %s", cfg.RedisAddr)
 	}
 
-	// —— 配置中心 + 数据库:PG_DSN 是认证/异步/管理端的总开关 ——
+	// —— 配置中心 + 数据库:MYSQL_DSN 是认证/异步/管理端的总开关 ——
 	// keyProvider 即使没有 DB 也要存在:它的 fallback 直接给 env 值,用户没有配置回退env值
 	// amap.Client 拿到的永远是同一个查询接口,DB 配没配对它透明
 	var keyProvider *settings.Provider
 	var authSvc *auth.Service
+	var communitySvc *community.Service
 	var plansRepo repo.TaskRepo
 	var taskQueue *queue.Queue
 
-	if cfg.PGDSN != "" { //数据库有值
-		gormRepo, err := repo.NewGorm(cfg.PGDSN)
+	if cfg.MySQLDSN != "" { //数据库有值
+		gormRepo, err := repo.NewGorm(cfg.MySQLDSN)
 		if err == nil {
 			err = gormRepo.Migrate(ctx)
 		}
 		if err != nil {
-			log.Printf("postgres unavailable (%v), auth/async/admin disabled", err)
+			log.Printf("mysql unavailable (%v), auth/async/admin disabled", err)
 		} else {
-			log.Printf("postgres connected, tasks/users/app_settings ready")
+			log.Printf("mysql connected, tasks/users/app_settings ready")
 			plansRepo = gormRepo
 
 			authStore := auth.NewGormStore(gormRepo.DB())
 			if err := authStore.Migrate(ctx); err != nil {
 				log.Printf("auth migrate failed: %v", err)
 			} else {
-				authSvc = auth.NewService(authStore)
+				// 登录限速:Redis 可达才装配;不可达则不限速地跑(fail open)。
+				// 上线规模默认每 IP 每分钟 10 次失败。
+				authOpts := []auth.Option{}
+				if rl, err := auth.NewRedisLoginLimiter(cfg.RedisAddr, 10, time.Minute); err != nil {
+					log.Printf("login limiter unavailable (%v), login rate limiting disabled", err)
+				} else {
+					authOpts = append(authOpts, auth.WithLimiter(rl))
+					log.Printf("login rate limit enabled: 10 failures/min per IP (redis %s)", cfg.RedisAddr)
+				}
+				authSvc = auth.NewService(authStore, authOpts...)
+				// 过期会话周期清理:惰性删除覆盖不到的死会话靠这里兜底
+				go authSvc.RunSessionCleanup(ctx, time.Hour)
+
+				// 社区模块:复用同一个 gorm 连接,迁移与 auth 同一时机。
+				// 迁移失败只降级不启动失败 —— /community/* 不注册,其余功能照常
+				communityStore := community.NewGormStore(gormRepo.DB())
+				if err := communityStore.Migrate(ctx); err != nil {
+					log.Printf("community migrate failed: %v", err)
+				} else {
+					communitySvc = community.NewService(communityStore)
+				}
 				// 种子管理员:env 给了就确保存在;没给则跳过(管理端仍可注册普通用户,
 				// 但没人能进管理 API 403)
 				if cfg.AdminUser != "" && cfg.AdminPass != "" {
@@ -83,26 +109,36 @@ func main() {
 		}
 	} else { //数据库连接失败，env兜底
 		keyProvider = settings.NewProvider(nil, envFallback(cfg)) // 纯 env 模式
-		log.Printf("PG_DSN not set: auth/async/admin disabled (sync /plan unaffected)")
+		log.Printf("MYSQL_DSN not set: auth/async/admin disabled (sync /plan unaffected)")
 	}
 
-	// —— 距离层装配:客户端常驻,key 动态取 ——
-	// keyFn 每次请求现查 Provider(DB>env,自带缓存):管理端改 key 不重启即生效
+	// —— 距离层装配:来源可选,valhalla 默认,amap 遗留门控 ——
+	// valhalla(自托管,无 key)是默认来源;DISTANCE_SOURCE=amap 切回高德
+	// (key 动态取:管理端 DB > env 兜底,改 key 不重启即生效)。
 	amapClient := amap.NewClient(cfg.AmapKey, distCache).WithKeyFn(func() string {
 		return keyProviderValue(keyProvider, settings.KeyAmapRest, cfg.AmapKey)
 	})
-	matrixService := matrix.NewWithAmap(amapClient)
+	var src geo.Source
+	switch cfg.DistanceSource {
+	case "amap":
+		src = amapClient
+		log.Printf("distance source: amap (legacy)")
+	default:
+		src = valhalla.NewClient(cfg.ValhallaURL, distCache)
+		log.Printf("distance source: valhalla at %s", cfg.ValhallaURL)
+	}
+	matrixService := matrix.NewWithSource(src)
 
 	// —— 异步任务装配:复用同一个 PG;Redis Stream 做传送带 ——
 	if plansRepo != nil {
 		taskQueue = queue.New(cfg.RedisAddr, "plan_tasks", "workers", "")
 		go func() {
-			if err := worker.Run(ctx, taskQueue, plansRepo, matrixService, amapClient); err != nil &&
+			if err := worker.Run(ctx, taskQueue, plansRepo, matrixService, src); err != nil &&
 				err != context.Canceled {
 				log.Printf("[worker] exited: %v", err)
 			}
 		}()
-		log.Printf("async plan tasks enabled (postgres + stream plan_tasks)")
+		log.Printf("async plan tasks enabled (mysql + stream plan_tasks)")
 	}
 
 	// —— 用户端引擎(:7800)——
@@ -120,8 +156,30 @@ func main() {
 	}
 	if authSvc != nil {
 		opts = append(opts, api.WithAuth(authSvc))
+		if communitySvc != nil {
+			opts = append(opts, api.WithCommunity(communitySvc))
+		}
+		// 注册限流:与登录限流同一个类型、不同参数(5 次/时/IP)——
+		// 注册是"创建账号"入口,灌垃圾账号的代价比试密码高,窗口更严。
+		if rrl, err := auth.NewRedisLoginLimiter(cfg.RedisAddr, 5, time.Hour); err != nil {
+			log.Printf("register limiter unavailable (%v), register rate limiting disabled", err)
+		} else {
+			opts = append(opts, api.WithRegisterLimiter(rrl))
+			log.Printf("register rate limit enabled: 5/hour per IP (redis %s)", cfg.RedisAddr)
+		}
 	}
-	router := api.NewRouter(matrixService, amapClient, plansRepo, taskQueue, opts...)
+	// —— 搜索来源:默认 Photon(公共实例在大陆网络可达,Nominatim 不可达) ——
+	var searcher api.Searcher
+	switch cfg.SearchSource {
+	case "nominatim":
+		searcher = nominatim.NewClient(cfg.NominatimURL)
+		log.Printf("search source: nominatim at %s", cfg.NominatimURL)
+	default:
+		searcher = photon.NewClient(cfg.PhotonURL)
+		log.Printf("search source: photon at %s", cfg.PhotonURL)
+	}
+	router := api.NewRouter(matrixService, src, plansRepo, taskQueue,
+		append(opts, api.WithSearcher(searcher))...)
 
 	// —— 两个引擎,任一退出即整个进程退出——
 	errCh := make(chan error, 2)
@@ -139,7 +197,7 @@ func main() {
 			errCh <- adminRouter.Run(":" + cfg.AdminPort)
 		}()
 	} else {
-		log.Printf("admin server disabled (needs ADMIN_PORT + PG_DSN)")
+		log.Printf("admin server disabled (needs ADMIN_PORT + MYSQL_DSN)")
 	}
 	log.Fatalf("server exited: %v", <-errCh)
 }

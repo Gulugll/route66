@@ -133,7 +133,7 @@ func TestWorkerConsumesTaskEndToEnd(t *testing.T) {
 	t.Cleanup(func() { _ = q.Close() })
 	r := newFakeRepo()
 	am := fakeAmap(t)
-	m := matrix.NewWithAmap(am)
+	m := matrix.NewWithSource(am)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

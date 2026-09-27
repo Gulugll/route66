@@ -1,95 +1,79 @@
-// MapView.jsx —— 地图区
+// MapView.jsx —— 地图区(Leaflet + OSM 底图)
 //
 // React 与命令式地图库共存的样板:把"数据"和"绘制"分成多个 effect。
+// 标记与折线同属一个 LayerGroup,全删全画 —— 十几个点的量级下可接受,
+// 点数达到千级时再改为增量更新。
 //
-//   effect A:同步标记   —— 依赖 [map, points]
-//   effect B:同步折线   —— 依赖 [map, segments]
-//   effect C:绑定点击   —— 依赖 [map, onAddFromMap]
-//
-// 每个 effect 只负责一类同步,依赖数组显式声明。
-//
-// ⚠️ 已知代价:
-// 高德地图对象是命令式接口,没有"给一组新标记自动 diff"的能力,
-// 因此这里采用全删全画。十几个点的量级下可接受;
-// 点数达到千级时需改为增量更新(比较新旧列表,只增删差集)。
-// 注意:React 的 diff 只覆盖自己渲染的 DOM,管不到第三方库内部的对象。
+// 坐标约定:后端/plan 与 /route 返回的路径点是 [lng, lat](经度在前),
+// Leaflet 的 API 一律 [lat, lng] —— 在本组件统一转换,别处不出现第二份转换代码。
 
 import { useEffect, useRef } from 'react'
-import { MODE_COLORS, MODE_ICONS, MODE_LABELS, MODES } from '../theme.js'
+import L from 'leaflet'
+
+import { MODE_COLORS, MODE_LABELS, MODES } from '../theme.js'
 import { Icon } from './icons.jsx'
 
-export function MapView({ amap, points, segments, onAddFromMap, fab }) {
-  const { containerRef, map, status, error, zoomIn, zoomOut } = amap
+// 编号标记:圆形底 + 序号。不用默认图钉( bundler 下图标 URL 会 404 ),
+// divIcon 的 HTML 由我们完全掌控,编号与列表一致。
+function markerIcon(index) {
+  return L.divIcon({
+    className: 'pt-marker',
+    html: `<span>${index + 1}</span>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+  })
+}
 
-  // 存"地图上的标记对象"。用 ref 而不是 state:修改不需要触发重渲染,
-  // 它是同步用的登记表,不是界面状态。
-  // 同时记录"这些标记属于哪张地图":换地图(换 key)时不能拿
-  // 旧地图的标记去新地图上删,否则删不掉且会残留。
-  const markersRef = useRef({ map: null, items: [] })
-  const polylinesRef = useRef({ map: null, items: [] })
+export function MapView({ mapApi, points, segments, onAddFromMap, fab }) {
+  const { containerRef, map, status } = mapApi
+  const layerRef = useRef(null)
 
-  // ── effect A：把 points 同步到地图标记 ──
+  // ── effect A:points + segments 同步到地图(全删全画)──
   useEffect(() => {
     if (!map) return
 
-    const book = markersRef.current
-    if (book.map === map) {
-      book.items.forEach((m) => map.remove(m))
+    if (layerRef.current) layerRef.current.remove()
+    const group = L.layerGroup().addTo(map)
+    layerRef.current = group
+
+    points.forEach((p, i) => {
+      L.marker([p.lat, p.lng], { icon: markerIcon(i), title: p.name })
+        .bindTooltip(p.name || `点 ${i + 1}`, { direction: 'top' })
+        .addTo(group)
+    })
+
+    segments.forEach((seg) => {
+      // 后端路径是 [lng, lat],Leaflet 要 [lat, lng]
+      const line = seg.path.map(([lng, lat]) => [lat, lng])
+      if (line.length < 2) return
+      L.polyline(line, {
+        // 颜色来自 theme.js 的语义色表:图例和折线永远同色。
+        color: MODE_COLORS[seg.mode] || MODE_COLORS.driving,
+        weight: 5,
+        opacity: 0.75,
+        lineJoin: 'round',
+      }).addTo(group)
+    })
+
+    // 画完路线自动缩放到能装下整条路线;只有点没有路线时对齐所有点。
+    const bounds = L.latLngBounds([
+      ...points.map((p) => [p.lat, p.lng]),
+      ...segments.flatMap((seg) => seg.path.map(([lng, lat]) => [lat, lng])),
+    ])
+    if (bounds.isValid()) {
+      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 })
     }
+  }, [map, points, segments])
 
-    const items = points.map(
-      (p) => new window.AMap.Marker({ position: [p.lng, p.lat], title: p.name })
-    )
-    if (items.length > 0) map.add(items)
-
-    markersRef.current = { map, items }
-  }, [map, points])
-
-  // ── effect B：把 segments 同步到地图折线 ──
+  // ── effect B:点地图加一个点 ──
   useEffect(() => {
     if (!map) return
 
-    const book = polylinesRef.current
-    if (book.map === map) {
-      book.items.forEach((pl) => map.remove(pl))
-    }
-
-    const items = segments.map(
-      (seg) =>
-        new window.AMap.Polyline({
-          path: seg.path,
-          // 颜色来自 theme.js 的语义色表:图例和折线永远同色。
-          // 0.75 不透明度兼顾底图透出与路线可读性。
-          strokeColor: MODE_COLORS[seg.mode] || MODE_COLORS.driving,
-          strokeWeight: 5,
-          strokeOpacity: 0.75,
-          lineJoin: 'round',
-        })
-    )
-    if (items.length > 0) map.add(items)
-
-    polylinesRef.current = { map, items }
-
-    // 画完路线自动缩放到能装下整条路线。
-    // ⚠️ setFitView 必须在地图容器尺寸稳定后调用——
-    // 容器 0 宽时计算出的视野是错的,因此等一帧再调。
-    if (items.length > 0) {
-      const timer = setTimeout(() => map.setFitView(), 0)
-      return () => clearTimeout(timer)
-    }
-  }, [map, segments])
-
-  // ── effect C：点地图加一个点 ──
-  useEffect(() => {
-    if (!map) return
-
-    const handler = (e) => onAddFromMap({ lat: e.lnglat.lat, lng: e.lnglat.lng })
+    const handler = (e) => onAddFromMap({ lat: e.latlng.lat, lng: e.latlng.lng })
     map.on('click', handler)
 
     // 清理函数必须摘掉监听:否则 onAddFromMap 每次变化都会叠加一个监听,
     // 一次点击会加入多个点。
-    // (onAddFromMap 在 App.jsx 用 useCallback 包裹,引用稳定,
-    //  避免这个 effect 不必要地重跑。)
     return () => map.off('click', handler)
   }, [map, onAddFromMap])
 
@@ -97,49 +81,13 @@ export function MapView({ amap, points, segments, onAddFromMap, fab }) {
 
   return (
     <div className="map-area">
-      {/* 地图容器。不管有没有配 key 都渲染出来 ——
-          因为 React 需要一个"稳定的、始终存在的" DOM 节点挂地图。
-          如果等 key 有了再渲染容器，useAmap 里的 containerRef.current 就是 null 了。 */}
+      {/* 地图容器始终渲染:React 需要一个稳定存在的 DOM 节点挂地图 */}
       <div className="map-canvas" ref={containerRef} />
       {fab}
 
-      {status === 'no-key' && (
-        <div className="map-empty">
-          <Icon name="pin" size={28} style={{ color: 'var(--border)' }} />
-          <span className="map-empty-title">还没有配置高德 Key</span>
-          {/* 登录墙改造后 key 不再由使用者手填:管理员在管理台(7801)配置,
-              经 /config/public 下发到这里。文案只说"去哪配置",不说"自己填"。
-              JS key 与服务端 AMAP_KEY 的分工见 README「高德 key」一节。 */}
-          <span className="map-empty-desc">
-            地图渲染需要高德 JS key,由管理员在管理台统一配置
-            <br />
-            配置保存后刷新本页即可生效
-          </span>
-        </div>
-      )}
-
-      {status === 'loading' && (
-        <div className="map-empty">
-          <Icon name="spinner" size={24} style={{ color: 'var(--text-tertiary)' }} />
-          <span className="map-empty-desc">正在加载高德地图…</span>
-        </div>
-      )}
-
-      {status === 'failed' && (
-        <div className="map-empty">
-          <Icon name="alertCircle" size={26} style={{ color: 'var(--danger)' }} />
-          <span className="map-empty-title">地图加载失败</span>
-          <span className="map-empty-desc">
-            {error}
-            <br />
-            key 无效或未把当前域名加入白名单。请确认页面功能仍可用（手动输入坐标、规划不受影响）。
-          </span>
-        </div>
-      )}
-
-      {/* 图例：只在真的画了路线时才显示。
-          它和折线读的是同一张色表（theme.js 的 MODE_COLORS），
-          所以不可能出现"图例写驾车是蓝色、线其实画成绿色"这种不一致。 */}
+      {/* 图例:只在真的画了路线时才显示。
+          它和折线读的是同一张色表(theme.js 的 MODE_COLORS),
+          所以不可能出现"图例写驾车是蓝色、线其实画成绿色"的不一致。 */}
       {ready && segments.length > 0 && (
         <div className="floating legend">
           {MODES.map((m) => (
@@ -153,16 +101,16 @@ export function MapView({ amap, points, segments, onAddFromMap, fab }) {
 
       {ready && (
         <div className="floating zoom-control">
-          <button className="zoom-btn" onClick={zoomIn} aria-label="放大">
+          <button className="zoom-btn" onClick={mapApi.zoomIn} aria-label="放大">
             <Icon name="plus" size={14} />
           </button>
-          <button className="zoom-btn" onClick={zoomOut} aria-label="缩小">
+          <button className="zoom-btn" onClick={mapApi.zoomOut} aria-label="缩小">
             <Icon name="minus" size={14} />
           </button>
         </div>
       )}
 
-      {ready && <div className="attribution">地图数据 © 高德软件</div>}
+      {ready && <div className="attribution">地图数据 © OpenStreetMap 贡献者</div>}
     </div>
   )
 }

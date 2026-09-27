@@ -10,7 +10,7 @@
 //  2. 没做 PEL 重新认领:worker 处理到一半崩溃时,任务会滞留在 pending 列表,
 //     需要人工 XAUTOCLAIM(或将来加定时认领循环)。当前单 worker 规模下,
 //     影响仅限"极少数任务永远 queued",可接受。
-//  这两条属于可靠性增强,当前规模下不做,避免过度设计。
+//     这两条属于可靠性增强,当前规模下不做,避免过度设计。
 package worker
 
 import (
@@ -20,7 +20,7 @@ import (
 	"strconv"
 	"time"
 
-	"awesomeProject/internal/amap"
+	"awesomeProject/internal/geo"
 	"awesomeProject/internal/matrix"
 	"awesomeProject/internal/model"
 	"awesomeProject/internal/planner"
@@ -31,7 +31,7 @@ import (
 // Run 阻塞式消费循环,直到 ctx 被取消。装配层用一个 goroutine 跑它。
 // 单循环串行消费:解算本身已经很重(几十次高德请求),单个 worker 内部
 // 不必再开并发 —— 要提吞吐是"多起几个 worker 进程"的事,不是加 goroutine 的事。
-func Run(ctx context.Context, q *queue.Queue, r repo.TaskRepo, m *matrix.Service, am *amap.Client) error {
+func Run(ctx context.Context, q *queue.Queue, r repo.TaskRepo, m *matrix.Service, src geo.Source) error {
 	// 消费组要先存在才能 XREADGROUP;进程重启时组已在,EnsureGroup 幂等
 	if err := q.EnsureGroup(ctx); err != nil {
 		return err
@@ -59,7 +59,7 @@ func Run(ctx context.Context, q *queue.Queue, r repo.TaskRepo, m *matrix.Service
 			continue
 		}
 		for _, msg := range msgs {
-			processOne(ctx, q, r, m, am, msg.ID, msg.Values)
+			processOne(ctx, q, r, m, src, msg.ID, msg.Values)
 		}
 	}
 }
@@ -68,7 +68,7 @@ func Run(ctx context.Context, q *queue.Queue, r repo.TaskRepo, m *matrix.Service
 // 任何一步失败都把任务标 failed(带原因),然后照样 ACK——
 // 消息已无重放价值,失败原因记录在数据库里,前端轮询可见。
 func processOne(ctx context.Context, q *queue.Queue, r repo.TaskRepo,
-	m *matrix.Service, am *amap.Client, msgID string, values map[string]any) {
+	m *matrix.Service, src geo.Source, msgID string, values map[string]any) {
 
 	// 消息载荷只带 task_id;完整请求从库里取 —— DB 是事实源
 	rawID, _ := values["task_id"].(string)
@@ -99,7 +99,7 @@ func processOne(ctx context.Context, q *queue.Queue, r repo.TaskRepo,
 	}
 	var result planner.Result
 	if err == nil {
-		result, err = planner.Compute(points, mode, req.Manual, req.Segments, m, am)
+		result, err = planner.Compute(points, mode, req.Manual, req.Segments, m, src)
 	}
 	if err != nil {
 		// 失败写库(前端轮询可见原因),消息 ack 掉

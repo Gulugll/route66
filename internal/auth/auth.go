@@ -21,10 +21,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/go-sql-driver/mysql"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -53,11 +55,16 @@ const (
 
 // User 账号。gorm 标签 = 表结构唯一真相源(与 repo.Task 同一约定)。
 type User struct {
-	ID           int64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	Username     string    `gorm:"column:username;type:varchar(64);uniqueIndex;not null" json:"username"`
-	PasswordHash string    `gorm:"column:password_hash;type:text;not null" json:"-"`
-	Role         string    `gorm:"column:role;type:varchar(16);not null;default:'user'" json:"role"`
-	CreatedAt    time.Time `gorm:"column:created_at" json:"created_at"`
+	ID           int64  `gorm:"primaryKey;autoIncrement" json:"id"`
+	Username     string `gorm:"column:username;type:varchar(64);uniqueIndex;not null" json:"username"`
+	PasswordHash string `gorm:"column:password_hash;type:text;not null" json:"-"`
+	Role         string `gorm:"column:role;type:varchar(16);not null;default:'user'" json:"role"`
+	// 社区身份层(M1)。可空:空昵称时前端回退显示 username。
+	// 不带 not null —— AutoMigrate 对已有表加可空列无需回填默认值。
+	Nickname  string    `gorm:"column:nickname;type:varchar(32)" json:"nickname"`
+	AvatarURL string    `gorm:"column:avatar_url;type:varchar(255)" json:"avatar_url"`
+	Bio       string    `gorm:"column:bio;type:varchar(200)" json:"bio"`
+	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
 }
 
 func (User) TableName() string { return "users" }
@@ -82,6 +89,14 @@ type Store interface {
 	CreateSession(ctx context.Context, s *Session) error
 	GetSession(ctx context.Context, token string) (Session, error)
 	DeleteSession(ctx context.Context, token string) error
+	// DeleteExpiredSessions 删除所有已过期的会话,返回删除条数。
+	// UserFromToken 的"顺手删"只覆盖仍被查询的 token,
+	// 没人再用的死会话靠周期任务兜底(见 RunSessionCleanup)。
+	DeleteExpiredSessions(ctx context.Context) (int64, error)
+	// UpdateProfile 改昵称与简介;头像走 SetAvatarURL(上传成功后的尾部动作)。
+	UpdateProfile(ctx context.Context, userID int64, nickname, bio string) error
+	// SetAvatarURL 只更新头像 URL。
+	SetAvatarURL(ctx context.Context, userID int64, avatarURL string) error
 }
 
 // GormStore 真库实现。表由 Migrate 建立。
@@ -98,10 +113,18 @@ func (s *GormStore) Migrate(ctx context.Context) error {
 	return s.db.WithContext(ctx).AutoMigrate(&User{}, &Session{})
 }
 
+// isDuplicateKey 判断是否唯一约束冲突。用 errors.As 拿 *mysql.MySQLError
+// 的 Number(1062),不匹配报错文案 —— 文案是驱动实现细节,类型才是契约。
+// 旧 PG 方案用 strings.Contains("duplicate key") 匹配文案,换库即静默失效。
+func isDuplicateKey(err error) bool {
+	var me *mysql.MySQLError
+	return errors.As(err, &me) && me.Number == 1062
+}
+
 func (s *GormStore) CreateUser(ctx context.Context, u *User) error {
 	err := s.db.WithContext(ctx).Create(u).Error
-	if err != nil && strings.Contains(err.Error(), "duplicate key") {
-		// 把数据库的方言错误翻译成业务错误:调用方不该知道 PG 的报错长什么样
+	if isDuplicateKey(err) {
+		// 把数据库的方言错误翻译成业务错误:调用方不该知道底层库的报错长什么样
 		return ErrUsernameTaken
 	}
 	return err
@@ -142,6 +165,33 @@ func (s *GormStore) DeleteSession(ctx context.Context, token string) error {
 	return s.db.WithContext(ctx).Delete(&Session{}, "token = ?", token).Error
 }
 
+// DeleteExpiredSessions 一条 DELETE 扫全表过期行。expires_at 上有查询需求
+// 但频率低(每小时一次),不为它单独建索引。
+func (s *GormStore) DeleteExpiredSessions(ctx context.Context) (int64, error) {
+	res := s.db.WithContext(ctx).Where("expires_at < ?", time.Now()).Delete(&Session{})
+	return res.RowsAffected, res.Error
+}
+
+func (s *GormStore) UpdateProfile(ctx context.Context, userID int64, nickname, bio string) error {
+	res := s.db.WithContext(ctx).Model(&User{}).Where("id = ?", userID).
+		Updates(map[string]any{"nickname": nickname, "bio": bio})
+	// RowsAffected == 0 = 没这个人。GORM 的 Updates(struct) 会跳过零值字段,
+	// 把昵称清成空串会被静默忽略 —— 所以这里必须用 map,这是 GORM 最经典的坑之一。
+	if res.Error == nil && res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return res.Error
+}
+
+func (s *GormStore) SetAvatarURL(ctx context.Context, userID int64, avatarURL string) error {
+	res := s.db.WithContext(ctx).Model(&User{}).Where("id = ?", userID).
+		Update("avatar_url", avatarURL)
+	if res.Error == nil && res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return res.Error
+}
+
 func fromGorm(u User, err error) (User, error) {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return User{}, ErrNotFound
@@ -149,12 +199,26 @@ func fromGorm(u User, err error) (User, error) {
 	return u, err
 }
 
-// Service 认证业务。只依赖 Store 接口,测试塞 fake。
+// Service 认证业务。只依赖 Store 接口,测试塞 fake;
+// limiter 可为 nil(Redis 没配/挂了就不限速,fail open)。
 type Service struct {
-	store Store
+	store   Store
+	limiter LoginLimiter
 }
 
-func NewService(store Store) *Service { return &Service{store: store} }
+// Option 装配可选项。可变参让 NewService(store) 的旧调用保持兼容。
+type Option func(*Service)
+
+// WithLimiter 挂登录限速器。不挂 = 不限速(本地开发/Redis 不可用的降级形态)。
+func WithLimiter(l LoginLimiter) Option { return func(s *Service) { s.limiter = l } }
+
+func NewService(store Store, opts ...Option) *Service {
+	s := &Service{store: store}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
 
 // Register 注册新用户。用户名 3~32 个字符(中英文都可),密码至少 6 位。
 // 返回创建好的用户(不含密码哈希以外的敏感信息)。
@@ -189,18 +253,29 @@ func (s *Service) register(ctx context.Context, username, password, role string)
 }
 
 // Login 校验用户名密码,成功则创建会话并返回 token(将写入 HttpOnly cookie)。
+// ip 是调用方(c.ClientIP())传来的来源地址,限速按它记账。
 // 用户名不存在和密码错误返回**同一个**错误文案 —— 见包注释的安全红线。
-func (s *Service) Login(ctx context.Context, username, password string) (User, string, error) {
+func (s *Service) Login(ctx context.Context, ip, username, password string) (User, string, error) {
+	if s.limiter != nil {
+		if err := s.limiter.Check(ctx, ip); err != nil {
+			// ErrLoginThrottled 原样上抛,handler 翻译成 429。
+			// 被拒的尝试不再往下走:bcrypt 不算、库不查 —— 限速同时省了它们。
+			return User{}, "", err
+		}
+	}
 	u, err := s.store.GetUserByName(ctx, strings.TrimSpace(username))
 	if errors.Is(err, ErrNotFound) {
+		s.recordLoginFailure(ctx, ip)
 		return User{}, "", ErrBadCredentials
 	}
 	if err != nil {
+		// 存储故障不是用户的错,不计入限速
 		return User{}, "", fmt.Errorf("%w: %v", ErrStorageUnavailable, err)
 	}
 	// bcrypt 校验:即使攻击者拿到库,也只有 hash;
 	// CompareHashAndPassword 内部是常数时间比较,不泄露"前几位对没对"
 	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)) != nil {
+		s.recordLoginFailure(ctx, ip)
 		return User{}, "", ErrBadCredentials
 	}
 	token, err := newToken()
@@ -211,7 +286,18 @@ func (s *Service) Login(ctx context.Context, username, password string) (User, s
 	if err := s.store.CreateSession(ctx, sess); err != nil {
 		return User{}, "", fmt.Errorf("%w: %v", ErrStorageUnavailable, err)
 	}
+	if s.limiter != nil {
+		s.limiter.Reset(ctx, ip) // 登录成功,该 IP 的失败计数清零
+	}
 	return u, token, nil
+}
+
+// recordLoginFailure 记失败但 limiter 缺席时是 no-op ——
+// 降级形态下登录功能完整,只是不记账。
+func (s *Service) recordLoginFailure(ctx context.Context, ip string) {
+	if s.limiter != nil {
+		s.limiter.RecordFailure(ctx, ip)
+	}
 }
 
 // ErrBadCredentials 登录失败的统一错误。文案故意模糊 —— 防枚举。
@@ -221,6 +307,38 @@ var ErrBadCredentials = errors.New("用户名或密码错误")
 // handler 遇到它必须给**固定文案** + 503,绝不能把 err.Error() 透给前端 ——
 // 那里面是 DSN/表结构/驱动报错原文,属于内部细节(2026-09-18 实测泄漏过)。
 var ErrStorageUnavailable = errors.New("storage unavailable")
+
+// UpdateProfile 改昵称/简介。TrimSpace 后校验长度;rune 计数——
+// len() 数字节,中文昵称会被低估一倍以上。
+func (s *Service) UpdateProfile(ctx context.Context, userID int64, nickname, bio string) error {
+	nickname = strings.TrimSpace(nickname)
+	bio = strings.TrimSpace(bio)
+	if n := utf8.RuneCountInString(nickname); n > 32 {
+		return fmt.Errorf("昵称最多 32 个字符")
+	}
+	if n := utf8.RuneCountInString(bio); n > 200 {
+		return fmt.Errorf("简介最多 200 个字符")
+	}
+	if err := s.store.UpdateProfile(ctx, userID, nickname, bio); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return err
+		}
+		return fmt.Errorf("%w: %v", ErrStorageUnavailable, err)
+	}
+	return nil
+}
+
+// SetAvatarURL 头像 URL 落库。文件落盘在 api 层(它才认识 multipart),
+// 这里只管"库里那个 URL 变成什么"。
+func (s *Service) SetAvatarURL(ctx context.Context, userID int64, avatarURL string) error {
+	if err := s.store.SetAvatarURL(ctx, userID, avatarURL); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return err
+		}
+		return fmt.Errorf("%w: %v", ErrStorageUnavailable, err)
+	}
+	return nil
+}
 
 // Logout 删除会话。"退出登录"的本质是让服务端忘掉这个 token ——
 // 只清浏览器 cookie 是不够的,token 本身还有效。
@@ -248,6 +366,34 @@ func (s *Service) UserFromToken(ctx context.Context, token string) (User, error)
 		return User{}, ErrNotFound
 	}
 	return s.store.GetUserByID(ctx, sess.UserID)
+}
+
+// CleanupExpiredSessions 清一轮过期会话,返回删除条数。
+// 独立成方法是为了可测;RunSessionCleanup 是它的定时外壳。
+func (s *Service) CleanupExpiredSessions(ctx context.Context) (int64, error) {
+	return s.store.DeleteExpiredSessions(ctx)
+}
+
+// RunSessionCleanup 周期清理过期会话:启动立即清一次,之后每 every 清一次,
+// 直到 ctx 取消(进程退出)。
+// UserFromToken 的"顺手删"只覆盖"恰好还被查询"的过期 token;
+// 无人再用的死会话(用户直接弃登录)只有这里能收,否则 sessions 表只增不减。
+func (s *Service) RunSessionCleanup(ctx context.Context, every time.Duration) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		n, err := s.CleanupExpiredSessions(ctx)
+		if err != nil {
+			log.Printf("[auth] session cleanup failed: %v", err)
+		} else if n > 0 {
+			log.Printf("[auth] cleaned %d expired sessions", n)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 // EnsureSeedAdmin 确保种子管理员存在:已存在(同名)则跳过,不存在则创建。

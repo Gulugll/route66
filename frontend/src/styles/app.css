@@ -1055,10 +1055,10 @@ input {
 .sec-label b { color: var(--text-secondary); font-weight: 500; }
 
 .add-row { display: flex; gap: 7px; }
-.add-row input { border: 1px solid var(--border); border-radius: var(--radius-input); padding: 8px 11px; font-size: 13px; background: var(--bg-subtle); color: var(--ink); }
-.add-row input:focus { border-color: var(--ink); background: #fff; }
-.add-row .q { width: 180px; }
-.add-row .city { width: 70px; }
+/* ⚠️ 这里不要写 .add-row input 之类的元素选择器:
+   add-row 里现在放的是 TextField(.input-wrap + 无边框 .input),
+   元素选择器(0,1,1)会压过 .input(0,1,0),给输入框偷加边框和 padding,
+   在固定高度的 wrap 里溢出 —— 视觉上就是"框重叠"。样式跟类名走,不跟标签走。 */
 .btn-ghost { border: 1px solid var(--border); border-radius: var(--radius-input); padding: 8px 14px; font-size: 13px; color: var(--ink); background: var(--bg-surface); flex: none; }
 .btn-ghost:hover { border-color: var(--ink); }
 .manual-toggle { font-size: 12px; color: var(--text-tertiary); background: none; align-self: flex-start; padding: 0; }
@@ -1197,3 +1197,174 @@ input {
 .chips { max-width: none; flex: 0 1 auto; }
 .result-sec { flex: 1 1 220px; min-width: 200px; }
 .add-row .q { width: 150px; }
+
+/* ---------------------------------------------------------------------------
+   地图标记(Leaflet)
+   --------------------------------------------------------------------------- */
+.pt-marker {
+  background: none;
+  border: none;
+}
+
+/* 编号圆形标记:底色用全局唯一交互色(墨),序号与地点列表一致 */
+.pt-marker span {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+/* ---------------------------------------------------------------------------
+   社区(M4 精修):站牌封面瀑布流 / 详情排版 / 下划线视图导航
+   纪律:墨色唯一交互色;彩色只作为帖子身份色(极浅底)与出行语义(legMode)出现。
+   --------------------------------------------------------------------------- */
+.topbar-navs { display: flex; gap: 2px; height: 100%; align-items: stretch; }
+.topbar-nav {
+  border: none; background: transparent; padding: 0 16px; font-size: 13px;
+  color: var(--text-secondary); cursor: pointer; position: relative;
+}
+.topbar-nav:hover { color: var(--ink); }
+/* 视图切换用墨色下划线表达"当前在哪",不用药丸底 */
+.topbar-nav.on { color: var(--ink); font-weight: 500; }
+.topbar-nav.on::after {
+  content: ""; position: absolute; left: 14px; right: 14px; bottom: 0;
+  height: 2px; background: var(--ink); border-radius: 1px 1px 0 0;
+}
+
+.community-page { position: absolute; inset: 0; overflow-y: auto; background: var(--bg-page); }
+.community-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 20px; position: sticky; top: 0; z-index: 5; background: var(--bg-page);
+}
+.community-title { font-size: 15px; font-weight: 500; color: var(--ink); letter-spacing: -0.01em; }
+.community-empty { text-align: center; color: var(--text-secondary); font-size: 13px; padding: 56px 16px; }
+
+/* 等高网格:三段式(封面 150px + 标题两行 + meta)让每张卡尺寸完全一致;
+   auto-fill 自适应列数,宽窗口 4 列、窄窗口 2 列,不用媒体查询 */
+.community-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px; padding: 0 20px 24px;
+}
+.community-card {
+  display: flex; flex-direction: column; background: var(--bg-surface);
+  border: 1px solid var(--border-soft); border-radius: var(--radius-card);
+  overflow: hidden; cursor: pointer; transition: border-color 0.15s ease;
+}
+.community-card:hover { border-color: var(--ink); }
+.community-card:hover .community-card-title { color: var(--ink); }
+
+/* 封面固定高:图与站牌线稿共用同一高度,两类卡片等大 */
+.community-cover { height: 150px; }
+.community-cover--img { padding: 0; }
+.community-cover--img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 站牌封面:起点 —线— 终点,底色为该帖身份色(极浅) */
+.community-cover {
+  display: flex; align-items: center; gap: 12px; padding: 0 18px;
+}
+.cover-stop {
+  font-size: 14px; font-weight: 600; letter-spacing: -0.01em;
+  max-width: 38%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cover-line {
+  flex: 1; height: 0; border-top: 2px dashed currentColor; opacity: 0.45; position: relative;
+}
+/* 线两端各一个实心圆点,站牌隐喻的收笔 */
+.cover-line::before, .cover-line::after {
+  content: ""; position: absolute; top: -5px; width: 8px; height: 8px;
+  border-radius: 50%; background: currentColor;
+}
+.cover-line::before { left: -1px; }
+.cover-line::after { right: -1px; }
+
+.community-card-body { padding: 12px 14px 12px; flex: 1; display: flex; flex-direction: column; }
+.community-card-body .community-card-meta { margin-top: auto; }
+.community-img-count { font-variant-numeric: tabular-nums; }
+.community-card-title {
+  font-size: 13px; color: var(--text-secondary); margin-bottom: 9px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.community-card:hover .community-card-title { color: var(--ink); }
+.community-card-meta {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12px; color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.community-card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 详情 */
+.post-detail { padding: 0 20px 28px; max-width: 620px; margin: 0 auto; }
+.post-title {
+  font-size: 21px; font-weight: 500; color: var(--ink);
+  letter-spacing: -0.015em; line-height: 1.35; margin: 6px 0 12px;
+}
+.post-byline { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.post-byline-name { font-size: 13px; font-weight: 500; color: var(--ink); }
+.post-byline-time { font-size: 12px; color: var(--text-tertiary); }
+.post-map {
+  height: 260px; border-radius: var(--radius-card); overflow: hidden;
+  border: 1px solid var(--border-soft); background: var(--bg-subtle);
+}
+.post-content { font-size: 14px; line-height: 1.75; color: var(--ink); white-space: pre-wrap; }
+.post-like-row { display: flex; align-items: center; gap: 14px; margin: 16px 0 22px; }
+.like-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-variant-numeric: tabular-nums; border-radius: 999px; padding: 6px 14px;
+}
+.like-btn.liked { background: var(--ink); color: #fff; border-color: var(--ink); }
+.like-btn:disabled { opacity: 0.55; }
+.post-route-line { font-size: 12px; color: var(--text-secondary); line-height: 1.8; }
+.community-share-points { font-size: 12px; color: var(--text-secondary); line-height: 1.8; }
+.share-arrow { color: var(--driving); margin: 0 4px; }
+
+/* 评论 */
+.comment-section { border-top: 1px solid var(--border-soft); padding-top: 16px; }
+.comment-heading {
+  font-size: 13px; font-weight: 500; color: var(--ink); margin-bottom: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.comment-item { display: flex; gap: 10px; padding: 8px 0; }
+.comment-author { font-size: 12px; color: var(--ink); font-weight: 500; }
+.comment-time { color: var(--text-tertiary); font-weight: 400; margin-left: 8px; }
+.comment-content { font-size: 13px; color: var(--ink); line-height: 1.65; margin-top: 2px; }
+.comment-input-row { display: flex; gap: 8px; margin-top: 14px; }
+.comment-input-row .input { flex: 1; }
+
+/* 图片:分享弹窗九宫格 + 详情图片区 */
+.share-images { display: flex; flex-wrap: wrap; gap: 8px; }
+.share-img {
+  position: relative; width: 68px; height: 68px;
+  border-radius: var(--radius-input); overflow: hidden;
+  border: 1px solid var(--border-soft); background: var(--bg-sunken);
+}
+.share-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.share-img.uploading { display: flex; align-items: center; justify-content: center; }
+.share-img-loading { color: var(--text-tertiary); font-size: 16px; }
+.share-img-del {
+  position: absolute; top: 2px; right: 2px; width: 18px; height: 18px;
+  border: none; border-radius: 50%; background: rgba(0,0,0,0.55); color: #fff;
+  font-size: 12px; line-height: 1; cursor: pointer; display: flex;
+  align-items: center; justify-content: center; padding: 0;
+}
+.share-img-add {
+  width: 68px; height: 68px; border: 1px dashed var(--border);
+  border-radius: var(--radius-input); background: transparent;
+  color: var(--text-tertiary); font-size: 22px; cursor: pointer;
+}
+.share-img-add:hover { border-color: var(--ink); color: var(--ink); }
+
+/* 详情图片:单图通栏、多图两列;固定高裁切保持节奏一致 */
+.post-images { display: grid; gap: 8px; margin: 14px 0; }
+.post-images--single { grid-template-columns: 1fr; }
+.post-images--single img { width: 100%; height: 320px; object-fit: cover; border-radius: var(--radius-card); }
+.post-images--grid { grid-template-columns: repeat(2, 1fr); }
+.post-images--grid img {
+  width: 100%; height: 150px; object-fit: cover;
+  border-radius: var(--radius-input); border: 1px solid var(--border-soft);
+}

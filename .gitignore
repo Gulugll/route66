@@ -41,3 +41,12 @@
 
 # superpowers 设计文档产物（本地参考资料,不进仓库）
 docs/superpowers/
+
+# /understand 知识图谱（本地分析产物，可由 /understand 重新生成）
+.understand-anything/
+
+# Valhalla 本地瓦片数据(脚本下载,不进仓库)
+/valhalla-data/
+
+# 运行时产物:上传的头像/帖子图片(用户数据,不进仓库)
+.run/

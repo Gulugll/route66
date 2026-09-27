@@ -8,7 +8,7 @@ package planner
 import (
 	"fmt"
 
-	"awesomeProject/internal/amap"
+	"awesomeProject/internal/geo"
 	"awesomeProject/internal/matrix"
 	"awesomeProject/internal/model"
 	"awesomeProject/internal/solver"
@@ -123,7 +123,7 @@ func Validate(points []model.Point, mode model.Mode, segments []string) error {
 //   - 驾车:真实路网全矩阵(批量 n 次) → SA/manual 顺序 → 求和
 //   - 步行/公交:直线预矩阵(0 API)解序 → 只对最终顺序的 n-1 条边查真路
 func Compute(points []model.Point, mode model.Mode, manual bool, segments []string,
-	m *matrix.Service, am *amap.Client) (Result, error) {
+	m *matrix.Service, src geo.Source) (Result, error) {
 
 	var result Result
 	var warnings []string
@@ -134,17 +134,17 @@ func Compute(points []model.Point, mode model.Mode, manual bool, segments []stri
 		// —— 混合出行:每段各自的方式 ——
 		// 每段方式不同 → 没有统一的距离矩阵 → 无法做 TSP,
 		// 顺序就是用户列表顺序,逐段算距离求和。
-		if am == nil || !am.HasAPIKey() {
-			return Result{}, fmt.Errorf("未配置 AMAP_KEY,混合出行不可用")
+		if src == nil || !src.HasAPIKey() {
+			return Result{}, fmt.Errorf("距离来源不可用,混合出行不可用")
 		}
 		for i := 0; i < n-1; i++ {
-			km, err := am.Distance(points[i], points[i+1], model.Mode(segments[i]))
+			km, err := src.Distance(points[i], points[i+1], model.Mode(segments[i]))
 			if err != nil {
 				// 部分失败容错:降级到直线距离,并记录降级路段,
 				// 警告一路带到结果里——不允许静默失败。
 				segmentName := points[i].Name + "→" + points[i+1].Name
 				km = matrix.Haversine(points[i], points[i+1])
-				warnings = append(warnings, fmt.Sprintf("路段 %s 的高德路线获取失败，已降级为直线距离", segmentName))
+				warnings = append(warnings, fmt.Sprintf("路段 %s 的路线获取失败，已降级为直线距离", segmentName))
 				degraded = append(degraded, segmentName)
 			}
 			result.TotalKm += km
@@ -160,7 +160,7 @@ func Compute(points []model.Point, mode model.Mode, manual bool, segments []stri
 			// 整张矩阵都是直线估算时没有"哪一段"可言,只给一条覆盖全线的警告。
 			dists, degradedByMatrix := m.DistanceMatrix(points, mode)
 			if degradedByMatrix {
-				warnings = append(warnings, "高德路网距离获取失败,本次总距离为直线估算,仅供参考")
+				warnings = append(warnings, "路网距离获取失败,本次总距离为直线估算,仅供参考")
 			}
 			order := seqOrder(n)
 			if !manual {
@@ -179,19 +179,19 @@ func Compute(points []model.Point, mode model.Mode, manual bool, segments []stri
 				order = solver.SimulatedAnnealing(dists, 0)
 			}
 			result.OrderIdx = order
-			if am == nil || !am.HasAPIKey() {
+			if src == nil || !src.HasAPIKey() {
 				// 没配 key:直线距离即预期行为,不算降级,不产生警告
 				result.TotalKm = solver.TourLength(dists, order)
 			} else {
 				for k := 0; k+1 < n; k++ {
 					a, b := points[order[k]], points[order[k+1]]
-					km, err := am.Distance(a, b, mode)
+					km, err := src.Distance(a, b, mode)
 					if err != nil {
 						// 部分失败容错:与混合出行分支同一套降级范式——
 						// 该段退直线、记路段名、警告带到结果。
 						segName := a.Name + "→" + b.Name
 						km = dists[order[k]][order[k+1]]
-						warnings = append(warnings, fmt.Sprintf("路段 %s 的高德路线获取失败，已降级为直线距离", segName))
+						warnings = append(warnings, fmt.Sprintf("路段 %s 的路线获取失败，已降级为直线距离", segName))
 						degraded = append(degraded, segName)
 					}
 					result.TotalKm += km
