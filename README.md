@@ -376,6 +376,28 @@ sequenceDiagram
     H-->>A: event: done（最终答案，规划结果同步工作台）
 ```
 
+### 流程总览
+
+与 `docs/route66.drawio` 第 2 页同一张流程（可拖拽编辑的版本在 drawio 里，GitHub 只渲染 mermaid，故此处同步一份）：
+
+```mermaid
+flowchart TD
+    U["用户输入问题（聊天面板）"] --> API["POST /agent<br/>NDJSON 流式：step / delta / think / confirm / done"]
+    API --> LOOP["Agent 循环（loop.go runLoop）<br/>模型 → 工具 → 结果回填历史"]
+    LOOP --> T{"工具调用"}
+    T -->|"普通工具"| N["search_place / plan_route<br/>→ planner.Compute + 手写 TSP"]
+    N -->|"结果回填历史"| LOOP
+    N --> DONE["done：最终答案<br/>规划结果同步工作台"]
+    T -->|"确认工具 confirm_place / confirm_mode"| C{"需要用户确认？"}
+    C -->|"否：候选 ≤1 直通返回"| N
+    C -->|"是：有歧义 / 方式待定"| P["ConfirmError → 循环暂停<br/>Pending 存内存会话（取即删防重放，TTL 15min）"]
+    P --> EV["confirm 事件（本次流结束）<br/>前端弹确认卡片"]
+    EV --> SEL["用户点选候选地点 / 出行方式"]
+    SEL --> RES["POST /agent/resume（session_id + answer）<br/>重复 / 过期 410"]
+    RES --> RC["RunConfirmed(answer) 重跑该工具<br/>真实结果回填 → Resume 继续循环（可链式确认）"]
+    RC -->|"从断点恢复"| LOOP
+```
+
 ### 设计要点
 
 - **循环不做决策**：决策完全来自模型的每轮输出，`loop.go` 只负责执行、历史管理与防失控
