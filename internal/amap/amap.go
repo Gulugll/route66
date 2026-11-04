@@ -112,6 +112,9 @@ func (c *Client) apiKey() string {
 // 调用方(路由 handler)据此决定 503 还是干活,不要在启动时缓存这个结果。
 func (c *Client) HasAPIKey() bool { return c.apiKey() != "" }
 
+// Kind 实现 geo.Source:返回模式标识,/config/public 据此告知前端当前底图。
+func (c *Client) Kind() string { return "amap" }
+
 // DistanceMatrix 返回 n×n 距离矩阵(公里),dists[i][j] = 点 i 到 j(按 mode 出行)。
 // 任何一步失败都返回 error——具体怎么降级由上层决定(matrix 会退回 haversine)。
 func (c *Client) DistanceMatrix(points []model.Point, mode model.Mode) ([][]float64, error) {
@@ -251,7 +254,7 @@ func wrapColumnErr(col int, err error) error {
 // 注意两点:
 //  1. 高德个人 key 的 QPS 限制很严(实测步行约 3/s),连发会返回
 //     CUQPS_HAS_EXCEEDED_THE_LIMIT,请求之间必须节流
-//  2. 教学规模(≤10 点)可接受;点数多会慢,这是逐对接口的代价
+//  2. 点数 ≤10 时可接受;点数多会慢,这是逐对接口的代价
 func (c *Client) pairwiseMatrix(points []model.Point, mode model.Mode) ([][]float64, error) {
 	n := len(points)
 	dists := make([][]float64, n)

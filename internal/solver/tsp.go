@@ -50,7 +50,7 @@ func NearestNeighbor(dists [][]float64, start int) []int {
 //  2. 好坏判据用**精确的 TourLength 差**,不套"边界两条边"的简化公式:
 //     那个公式默认反转段内部边不变,对对称矩阵成立,但驾车真实路网
 //     **不对称**(单行道/禁转),最优收益恰恰可能藏在内部边的方向翻转里。
-//     代价是每次评估 O(n),n≤50 的教学规模毫秒级,换正确性值得。
+//     代价是每次评估 O(n),n≤50 的规模毫秒级,换正确性值得。
 func TwoOpt(dists [][]float64, order []int) []int {
 	if len(order) < 2 {
 		return order

@@ -90,7 +90,7 @@ func (s *Service) RequireAdmin() gin.HandlerFunc {
 //
 // HttpOnly:JS 读不到 —— XSS 就算偷走了页面上的东西也偷不走会话;
 // SameSite=Lax:跨站 GET 导航会带上,跨站 POST 不会 —— CSRF 的基础防线;
-// 故意不设 Secure:本地教学是 http://localhost,设了 Secure 浏览器会拒发。
+// 故意不设 Secure:本地开发是 http://localhost,设了 Secure 浏览器会拒发。
 // 上 HTTPS 时必须补上,TODO 注释就是给那一刻的。
 func SetSessionCookie(c *gin.Context, token string, maxAge int) {
 	http.SetCookie(c.Writer, &http.Cookie{

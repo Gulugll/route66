@@ -70,7 +70,7 @@ type User struct {
 func (User) TableName() string { return "users" }
 
 // Session 服务端会话。token 是主键,查会话就是一次主键命中。
-// 不存"登录 IP/UA"之类的审计字段 —— 教学规模用不上,真要审计再加。
+// 不存"登录 IP/UA"之类的审计字段 —— 当前用不上,真要审计再加。
 type Session struct {
 	Token     string    `gorm:"column:token;type:varchar(64);primaryKey"`
 	UserID    int64     `gorm:"column:user_id;not null;index"`
@@ -414,7 +414,7 @@ func (s *Service) EnsureSeedAdmin(ctx context.Context, username, password string
 	return err
 }
 
-// ListUsers 全量用户列表(管理端用)。教学规模不分页,理由见 admin.go。
+// ListUsers 全量用户列表(管理端用)。当前规模不分页,理由见 admin.go。
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	return s.store.ListUsers(ctx)
 }

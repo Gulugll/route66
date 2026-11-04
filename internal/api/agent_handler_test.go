@@ -140,3 +140,100 @@ func TestAgentChatRejectsNonUserTail(t *testing.T) {
 		t.Fatalf("应返回 400,实际 %d", resp.Code)
 	}
 }
+
+// hitlModel 脚本:第 1 轮调真实 confirm_mode(HITL 暂停) → 答复后第 2 轮出答案。
+type hitlModel struct {
+	second string
+	calls  int
+	seen   [][]agent.Message
+}
+
+func (f *hitlModel) Complete(_ context.Context, msgs []agent.Message, _ []agent.ToolSpec, onDelta func(agent.Delta)) (agent.Completion, error) {
+	f.seen = append(f.seen, append([]agent.Message(nil), msgs...))
+	f.calls++
+	if f.calls == 1 {
+		call := agent.ToolCall{ID: "call-mode-1", Type: "function"}
+		call.Function.Name = "confirm_mode"
+		call.Function.Arguments = `{}`
+		return agent.Completion{Calls: []agent.ToolCall{call}}, nil
+	}
+	onDelta(agent.Delta{Content: f.second})
+	return agent.Completion{Text: f.second}, nil
+}
+
+// 全链契约:首请求 → confirm 事件(带 session_id 与三选项) →
+// resume 带答复 → done。恢复后模型历史必须含确认结果(OpenAI 对账)。
+func TestAgentConfirmThenResume(t *testing.T) {
+	model := &hitlModel{second: "好的,按驾车规划,全程 4.7 km"}
+	router := newAgentTestRouter(model, map[string]string{
+		settings.KeyLLMAPIKey: "sk-test",
+	})
+
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+		return resp
+	}
+
+	resp := post("/agent", `{"messages":[{"role":"user","content":"从天安门到天坛怎么走"}]}`)
+	lines := strings.Split(strings.TrimSpace(resp.Body.String()), "\n")
+	var confirmEvt struct {
+		Type      string   `json:"type"`
+		SessionID string   `json:"session_id"`
+		Prompt    string   `json:"prompt"`
+		Options   []string `json:"options"`
+	}
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &confirmEvt); err != nil {
+		t.Fatalf("末行解析失败: %v (%s)", err, resp.Body.String())
+	}
+	if confirmEvt.Type != "confirm" || confirmEvt.SessionID == "" {
+		t.Fatalf("末行应为 confirm 事件: %s", resp.Body.String())
+	}
+	if len(confirmEvt.Options) != 3 || confirmEvt.Prompt == "" {
+		t.Errorf("confirm 应带问题与三选项: %+v", confirmEvt)
+	}
+
+	// 错误的 session_id → 410(过期/不存在同一文案,不泄露会话存在性)
+	resp = post("/agent/resume", `{"session_id":"deadbeef","answer":"driving 驾车"}`)
+	if resp.Code != http.StatusGone {
+		t.Fatalf("未知会话应 410,实际 %d: %s", resp.Code, resp.Body.String())
+	}
+
+	// 正确答复 → 循环续跑至 done
+	resp = post("/agent/resume", `{"session_id":"`+confirmEvt.SessionID+`","answer":"driving 驾车"}`)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("resume 应 200,实际 %d: %s", resp.Code, resp.Body.String())
+	}
+	resumeLines := strings.Split(strings.TrimSpace(resp.Body.String()), "\n")
+	var done struct {
+		Type   string `json:"type"`
+		Answer string `json:"answer"`
+	}
+	if err := json.Unmarshal([]byte(resumeLines[len(resumeLines)-1]), &done); err != nil {
+		t.Fatalf("resume 末行解析失败: %v", err)
+	}
+	if done.Type != "done" || !strings.Contains(done.Answer, "4.7 km") {
+		t.Errorf("resume 应以 done 收尾: %s", resp.Body.String())
+	}
+
+	// 恢复后模型看到的最后历史必须含 role=tool 的确认结果(协议对账)
+	last := model.seen[len(model.seen)-1]
+	found := false
+	for _, m := range last {
+		if m.Role == agent.RoleTool && m.ToolCallID == "call-mode-1" &&
+			strings.Contains(*m.Content, "driving") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("恢复历史缺少确认结果: %+v", last)
+	}
+
+	// Pending 一次性:同一 session 再 resume → 410
+	resp = post("/agent/resume", `{"session_id":"`+confirmEvt.SessionID+`","answer":"driving 驾车"}`)
+	if resp.Code != http.StatusGone {
+		t.Fatalf("重复 resume 应 410,实际 %d", resp.Code)
+	}
+}

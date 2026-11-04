@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #F5F5F7; }
+  #map { width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  // 与旧前端 useLeaflet 同源：WGS-84、瓦片源 tile.openstreetmap.de（大陆实测可达）。
+  var DEFAULT_CENTER = [39.909, 116.397]; // 北京，纬度在前（Leaflet 顺序）
+  var DEFAULT_ZOOM = 12;
+  var MODE_COLORS = { driving: '#0066CC', walking: '#34A853', transit: '#E08600' };
+
+  var map = L.map('map', { zoomControl: true, attributionControl: false })
+    .setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+  L.tileLayer('https://tile.openstreetmap.de/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
+
+  var markers = {};   // id -> L.Marker
+  var polylines = [];
+  var ready = false;
+  var pending = [];   // WebView 未 ready 前到达的命令先缓存
+
+  function send(msg) {
+    if (window.ReactNativeWebView && ready) {
+      window.ReactNativeWebView.postMessage(JSON.stringify(msg));
+    }
+  }
+
+  map.on('click', function (e) {
+    send({ type: 'mapTap', lat: e.latlng.lat, lng: e.latlng.lng });
+  });
+
+  function makeMarker(cmd) {
+    var marker = L.marker([cmd.lat, cmd.lng], {
+      draggable: cmd.draggable !== false,
+      title: cmd.title || '',
+    }).addTo(map);
+    marker.on('dragend', function () {
+      var p = marker.getLatLng();
+      send({ type: 'markerDrag', id: cmd.id, lat: p.lat, lng: p.lng });
+    });
+    if (cmd.title) marker.bindTooltip(cmd.title, { permanent: true, direction: 'top', offset: [0, -8] });
+    return marker;
+  }
+
+  function handle(cmd) {
+    switch (cmd.type) {
+      case 'addMarker':
+        if (markers[cmd.id]) markers[cmd.id].setLatLng([cmd.lat, cmd.lng]);
+        else markers[cmd.id] = makeMarker(cmd);
+        break;
+      case 'removeMarker':
+        if (markers[cmd.id]) { map.removeLayer(markers[cmd.id]); delete markers[cmd.id]; }
+        break;
+      case 'clearMarkers':
+        Object.keys(markers).forEach(function (id) { map.removeLayer(markers[id]); });
+        markers = {};
+        break;
+      case 'drawPolyline':
+        cmd.segments.forEach(function (seg) {
+          var latlngs = seg.points.map(function (p) { return [p[1], p[0]]; }); // lng,lat -> lat,lng
+          var line = L.polyline(latlngs, {
+            color: MODE_COLORS[seg.mode] || '#1D1D1F',
+            weight: 4,
+            opacity: 0.9,
+          }).addTo(map);
+          polylines.push(line);
+        });
+        break;
+      case 'clearPolylines':
+        polylines.forEach(function (l) { map.removeLayer(l); });
+        polylines = [];
+        break;
+      case 'fitBounds': {
+        var pts = [];
+        Object.keys(markers).forEach(function (id) { pts.push(markers[id].getLatLng()); });
+        polylines.forEach(function (l) {
+          l.getLatLngs().forEach(function (ll) { pts.push(ll); });
+        });
+        if (pts.length === 1) map.setView(pts[0], Math.max(map.getZoom(), 14));
+        else if (pts.length > 1) map.fitBounds(L.latLngBounds(pts).pad(0.15));
+        break;
+      }
+      case 'setCenter':
+        map.setView([cmd.lat, cmd.lng], cmd.zoom || map.getZoom());
+        break;
+      default:
+        break;
+    }
+  }
+
+  window.addEventListener('message', function (e) {
+    var cmd = e.data;
+    try { cmd = JSON.parse(e.data); } catch (err) { return; }
+    if (!ready) { pending.push(cmd); return; }
+    handle(cmd);
+  });
+  document.addEventListener('message', function (e) {
+    var cmd = e.data;
+    try { cmd = JSON.parse(e.data); } catch (err) { return; }
+    if (!ready) { pending.push(cmd); return; }
+    handle(cmd);
+  });
+
+  // 地图初始化完成后通知 RN 侧，随后消费积压命令
+  map.whenReady(function () {
+    ready = true;
+    pending.forEach(handle);
+    pending = [];
+    send({ type: 'ready' });
+  });
+</script>
+</body>
+</html>

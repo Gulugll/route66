@@ -1,0 +1,128 @@
+0 verbose cli /Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/bin/node /Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/bin/npm
+1 info using npm@10.9.7
+2 info using node@v22.22.2
+3 silly config load:file:/Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/npmrc
+4 silly config load:file:/Users/shoushenwei/GolandProjects/awesomeProject/app/.npmrc
+5 silly config load:file:/Users/shoushenwei/.npmrc
+6 silly config load:file:/Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/etc/npmrc
+7 verbose title npm install
+8 verbose argv "install" "--no-audit" "--no-fund" "--cache" "/Users/shoushenwei/GolandProjects/awesomeProject/app/.npm-cache"
+9 verbose logfile logs-max:10 dir:/Users/shoushenwei/GolandProjects/awesomeProject/app/.npm-cache/_logs/2026-11-02T09_18_41_007Z-
+10 verbose logfile /Users/shoushenwei/GolandProjects/awesomeProject/app/.npm-cache/_logs/2026-11-02T09_18_41_007Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:4345298944 maxSize:1086324736 maxEntrySize:543162368
+13 silly idealTree buildDeps
+14 silly fetch manifest fb-dotslash@0.5.8
+15 silly packumentCache full:https://registry.npmjs.org/fb-dotslash cache-miss
+16 http fetch GET 200 https://registry.npmjs.org/npm 641ms
+17 http fetch GET 200 https://registry.npmjs.org/fb-dotslash 227ms (cache miss)
+18 silly placeDep node_modules/@react-native/debugger-shell fb-dotslash@ OK for: @react-native/debugger-shell@0.88.1 want: 0.5.8
+19 silly fetch manifest acorn@^6.0.0 || ^7.0.0 || ^8.0.0
+20 silly packumentCache full:https://registry.npmjs.org/acorn cache-miss
+21 http fetch GET 200 https://registry.npmjs.org/acorn 88ms (cache miss)
+22 silly placeDep ROOT acorn@ OK for: acorn-jsx@5.3.2 want: ^6.0.0 || ^7.0.0 || ^8.0.0
+23 warn ERESOLVE overriding peer dependency {
+23 warn ERESOLVE   code: 'ERESOLVE',
+23 warn ERESOLVE   edge: {
+23 warn ERESOLVE     type: 'peer',
+23 warn ERESOLVE     name: 'acorn',
+23 warn ERESOLVE     spec: '^6.0.0 || ^7.0.0 || ^8.0.0',
+23 warn ERESOLVE     error: 'INVALID',
+23 warn ERESOLVE     from: {
+23 warn ERESOLVE       name: 'acorn-jsx',
+23 warn ERESOLVE       version: '5.3.2',
+23 warn ERESOLVE       location: 'node_modules/acorn-jsx',
+23 warn ERESOLVE       isWorkspace: false,
+23 warn ERESOLVE       dependents: [Array]
+23 warn ERESOLVE     }
+23 warn ERESOLVE   },
+23 warn ERESOLVE   dep: {
+23 warn ERESOLVE     name: 'acorn',
+23 warn ERESOLVE     version: undefined,
+23 warn ERESOLVE     errors: [ [FetchError] ],
+23 warn ERESOLVE     package: {},
+23 warn ERESOLVE     whileInstalling: {
+23 warn ERESOLVE       name: 'acorn-jsx',
+23 warn ERESOLVE       version: '5.3.2',
+23 warn ERESOLVE       path: '/Users/shoushenwei/GolandProjects/awesomeProject/app/node_modules/acorn-jsx'
+23 warn ERESOLVE     },
+23 warn ERESOLVE     location: 'node_modules/acorn',
+23 warn ERESOLVE     isWorkspace: false,
+23 warn ERESOLVE     dependents: [ [Object] ]
+23 warn ERESOLVE   },
+23 warn ERESOLVE   force: false,
+23 warn ERESOLVE   isMine: false,
+23 warn ERESOLVE   strictPeerDeps: false,
+23 warn ERESOLVE   current: {
+23 warn ERESOLVE     name: 'acorn',
+23 warn ERESOLVE     version: undefined,
+23 warn ERESOLVE     errors: [ [FetchError] ],
+23 warn ERESOLVE     package: {},
+23 warn ERESOLVE     location: 'node_modules/acorn',
+23 warn ERESOLVE     isWorkspace: false,
+23 warn ERESOLVE     dependents: []
+23 warn ERESOLVE   }
+23 warn ERESOLVE }
+24 silly fetch manifest rimraf@^3.0.2
+25 silly packumentCache full:https://registry.npmjs.org/rimraf cache-miss
+26 http fetch GET 200 https://registry.npmjs.org/rimraf 87ms (cache miss)
+27 silly placeDep node_modules/flat-cache rimraf@ OK for: flat-cache@3.2.0 want: ^3.0.2
+28 silly fetch manifest terser@^5.15.0
+29 silly packumentCache full:https://registry.npmjs.org/terser cache-miss
+30 http fetch GET 200 https://registry.npmjs.org/terser 167ms (cache miss)
+31 silly placeDep node_modules/metro-minify-terser terser@ OK for: metro-minify-terser@0.87.2 want: ^5.15.0
+32 silly fetch manifest is-docker@^2.0.0
+33 silly packumentCache full:https://registry.npmjs.org/is-docker cache-miss
+34 http fetch GET 200 https://registry.npmjs.org/is-docker 71ms (cache miss)
+35 silly placeDep node_modules/@react-native/dev-middleware/node_modules/is-wsl is-docker@ OK for: is-wsl@2.2.0 want: ^2.0.0
+36 silly fetch manifest is-docker@^2.1.1
+37 silly packumentCache full:https://registry.npmjs.org/is-docker cache-miss
+38 http fetch GET 200 https://registry.npmjs.org/is-docker 65ms (cache miss)
+39 silly placeDep node_modules/@react-native/dev-middleware/node_modules/open is-docker@ OK for: open@8.4.2 want: ^2.1.1
+40 verbose FetchError: Invalid response body while trying to fetch https://registry.npmjs.org/fb-dotslash: EPERM: operation not permitted, unlink '/Users/shoushenwei/GolandProjects/awesomeProject/app/.npm-cache/_cacache/tmp/42da2eb5'
+    at /Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/node_modules/minipass-fetch/lib/body.js:170:15
+    at async Response.json (/Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/node_modules/minipass-fetch/lib/body.js:75:17)
+    at async RegistryFetcher.packument (/Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/node_modules/pacote/lib/registry.js:98:25)
+    at async RegistryFetcher.manifest (/Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/node_modules/pacote/lib/registry.js:128:23)
+    at async #fetchManifest (/Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/build-ideal-tree.js:1202:20)
+    at async #nodeFromEdge (/Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/build-ideal-tree.js:1040:19)
+    at async #buildDepStep (/Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/build-ideal-tree.js:904:11)
+    at async Arborist.buildIdealTree (/Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/build-ideal-tree.js:181:7)
+    at async Promise.all (index 1)
+    at async Arborist.reify (/Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/reify.js:133:5)
+41 verbose type system
+42 verbose stack FetchError: Invalid response body while trying to fetch https://registry.npmjs.org/fb-dotslash: EPERM: operation not permitted, unlink '/Users/shoushenwei/GolandProjects/awesomeProject/app/.npm-cache/_cacache/tmp/42da2eb5'
+42 verbose stack     at /Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/node_modules/minipass-fetch/lib/body.js:170:15
+42 verbose stack     at async Response.json (/Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/node_modules/minipass-fetch/lib/body.js:75:17)
+42 verbose stack     at async RegistryFetcher.packument (/Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/node_modules/pacote/lib/registry.js:98:25)
+42 verbose stack     at async RegistryFetcher.manifest (/Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/node_modules/pacote/lib/registry.js:128:23)
+42 verbose stack     at async #fetchManifest (/Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/build-ideal-tree.js:1202:20)
+42 verbose stack     at async #nodeFromEdge (/Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/build-ideal-tree.js:1040:19)
+42 verbose stack     at async #buildDepStep (/Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/build-ideal-tree.js:904:11)
+42 verbose stack     at async Arborist.buildIdealTree (/Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/build-ideal-tree.js:181:7)
+42 verbose stack     at async Promise.all (index 1)
+42 verbose stack     at async Arborist.reify (/Users/shoushenwei/.workbuddy/binaries/node/versions/22.22.2-6/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/reify.js:133:5)
+43 error code EPERM
+44 error syscall unlink
+45 error path /Users/shoushenwei/GolandProjects/awesomeProject/app/.npm-cache/_cacache/tmp/42da2eb5
+46 error errno EPERM
+47 error
+47 error Your cache folder contains root-owned files, due to a bug in
+47 error previous versions of npm which has since been addressed.
+47 error
+47 error To permanently fix this problem, please run:
+47 error   sudo chown -R 501:20 "/Users/shoushenwei/GolandProjects/awesomeProject/app/.npm-cache"
+48 silly unfinished npm timer reify 1793611121254
+49 silly unfinished npm timer reify:loadTrees 1793611121254
+50 verbose cwd /Users/shoushenwei/GolandProjects/awesomeProject/app
+51 verbose os Darwin 24.6.0
+52 verbose node v22.22.2
+53 verbose npm  v10.9.7
+54 notice
+54 notice New major version of npm available! 10.9.7 -> 12.2.1
+54 notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.1
+54 notice To update run: npm install -g npm@12.2.1
+54 notice  { force: true, [Symbol(proc-log.meta)]: true }
+55 verbose exit 1
+56 verbose code 1
+57 error A complete log of this run can be found in: /Users/shoushenwei/GolandProjects/awesomeProject/app/.npm-cache/_logs/2026-11-02T09_18_41_007Z-debug-0.log

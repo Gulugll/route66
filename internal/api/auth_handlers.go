@@ -153,7 +153,9 @@ func (s *Server) updateProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// publicConfig 下发浏览器渲染地图需要的公开配置(JS key + 安全密钥)。
+// publicConfig 下发浏览器渲染地图需要的公开配置:当前模式 + JS key + 安全密钥。
+// mode 来自距离来源的 Kind(单一真相源):amap = 高德模式(前端切高德底图,GCJ-02);
+// oss = 开源模式(OSM 底图,WGS-84)。JS key 只在 amap 模式有意义,一并下发。
 // 这俩"公开"是因为 JS key 天生要暴露在浏览器里(靠域名白名单保护),
 // 和必须捂在后端的 REST key 是两回事。管理端没配时回落 env(Provider 管),
 // 两处都没配就返回空串 —— 前端据此显示"去设置里配 key"的空态。
@@ -170,6 +172,7 @@ func (s *Server) publicConfig(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
+		"mode":   s.src.Kind(),
 		"js_key": jsKey,
 		"js_sec": jsSec,
 	})

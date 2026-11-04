@@ -27,6 +27,9 @@ func RouteTools(m *matrix.Service, src geo.Source, searcher placeSearcher) []Too
 	return []Tool{
 		&searchPlaceTool{searcher: searcher},
 		&planRouteTool{m: m, src: src},
+		// 确认类工具(HITL):歧义地点与出行方式两处暂停等人拍板
+		&confirmPlaceTool{searcher: searcher},
+		&confirmModeTool{},
 	}
 }
 

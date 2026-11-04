@@ -49,6 +49,8 @@ type Server struct {
 	registerLimiter auth.LoginLimiter
 	// community 社区服务;nil = 不注册 /community/*(与 repo/queue 同一降级语义)
 	community *community.Service
+	// sessions RouteBot HITL 会话(待确认的循环状态);进程内存,重启即清
+	sessions *agentSessions
 }
 
 // Searcher 地名搜索的消费者侧接口(只声明 api 层用到的方法)。
@@ -108,7 +110,7 @@ func (s *Server) protected(router *gin.Engine) gin.IRouter {
 // opts 是可选拼装(认证/配置中心),不传 = 老行为。
 func NewRouter(m *matrix.Service, src geo.Source, r repo.TaskRepo, q *queue.Queue,
 	opts ...Option) *gin.Engine {
-	s := &Server{matrix: m, src: src, repo: r, queue: q}
+	s := &Server{matrix: m, src: src, repo: r, queue: q, sessions: newAgentSessions()}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -129,6 +131,8 @@ func NewRouter(m *matrix.Service, src geo.Source, r repo.TaskRepo, q *queue.Queu
 	p := s.protected(router)
 	p.POST("/plan", s.plan)
 	p.POST("/agent", s.agentChat)
+	// HITL 恢复入口:用户在确认卡片上答复后续跑循环
+	p.POST("/agent/resume", s.agentResume)
 	p.GET("/search", s.search)
 	p.GET("/route", s.route)
 	// 异步任务接口只在装配了存储 + Stream 时注册:

@@ -36,6 +36,13 @@
 /web/
 /frontend/node_modules/
 
+# Electron 桌面壳：依赖与打包产物（clone 后 cd desktop && npm install 重建）
+/desktop/node_modules/
+/desktop/dist/
+
+# Android APK 产物（app/android/assembleRelease 生成，可重新构建）
+/*.apk
+
 # AI 会话的本地记忆 / 工作日志（跨会话的项目记忆在 AGENTS.md，那份进仓库）
 .workbuddy/
 

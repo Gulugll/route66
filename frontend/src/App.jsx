@@ -31,6 +31,8 @@ import { useAuth } from './hooks/useAuth.js'
 import { usePlan } from './hooks/usePlan.js'
 import { usePoints } from './hooks/usePoints.js'
 import { useToasts } from './hooks/useToasts.js'
+import { setMapMode } from './mapMode.js'
+import { fetchPublicConfig } from './api.js'
 
 import { MAX_POINTS_BATCH, MAX_POINTS_PAIRWISE } from './theme.js'
 
@@ -61,6 +63,14 @@ export default function App() {
   // 下游把它当依赖的 effect 就会白跑一遍。
   // （这是 useCallback 真正该用的场景 —— 不是为了"性能优化"，是为了"稳定引用"。）
   const showError = useCallback((msg) => push(msg, 'error'), [push])
+
+  // ── 地图模式:后端距离来源决定(amap=高德底图 / oss=OSM 底图),启动时拉一次 ──
+  // 失败静默:保底 oss(默认值),地图照常渲染,不该为配置接口挂掉阻塞整个应用
+  useEffect(() => {
+    fetchPublicConfig()
+      .then((c) => setMapMode(c.mode))
+      .catch(() => {})
+  }, [])
 
   // ── 地图上点一下 = 加一个点 ──
   const handleAddFromMap = useCallback(

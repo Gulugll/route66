@@ -56,6 +56,9 @@ func NewClientWithBase(base string, c cache.Cache) *Client {
 // 装配了即视为可用;真正的失败在请求时发生,由上层按降级处理。
 func (c *Client) HasAPIKey() bool { return true }
 
+// Kind 实现 geo.Source:开源模式标识,/config/public 据此告知前端当前底图。
+func (c *Client) Kind() string { return "oss" }
+
 // SearchPlaces Valhalla 不提供搜索,搜索由 Nominatim 负责。
 // 保留该方法只为满足 geo.Source 接口形状。
 func (c *Client) SearchPlaces(string, string, int) ([]model.Place, error) {

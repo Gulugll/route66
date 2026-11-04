@@ -11,6 +11,7 @@ import { useEffect, useRef } from 'react'
 import L from 'leaflet'
 
 import { MODE_COLORS, MODE_LABELS, MODES } from '../theme.js'
+import { getMapMode } from '../mapMode.js'
 import { Icon } from './icons.jsx'
 
 // 编号标记:圆形底 + 序号。不用默认图钉( bundler 下图标 URL 会 404 ),
@@ -25,7 +26,7 @@ function markerIcon(index) {
 }
 
 export function MapView({ mapApi, points, segments, onAddFromMap, fab }) {
-  const { containerRef, map, status } = mapApi
+  const { containerRef, map, status, project, unproject } = mapApi
   const layerRef = useRef(null)
 
   // ── effect A:points + segments 同步到地图(全删全画)──
@@ -37,14 +38,16 @@ export function MapView({ mapApi, points, segments, onAddFromMap, fab }) {
     layerRef.current = group
 
     points.forEach((p, i) => {
-      L.marker([p.lat, p.lng], { icon: markerIcon(i), title: p.name })
+      // 数据坐标(WGS-84) → 地图坐标(高德模式下是 GCJ-02);必须过投影关口
+      const [mlat, mlng] = project(p.lat, p.lng)
+      L.marker([mlat, mlng], { icon: markerIcon(i), title: p.name })
         .bindTooltip(p.name || `点 ${i + 1}`, { direction: 'top' })
         .addTo(group)
     })
 
     segments.forEach((seg) => {
-      // 后端路径是 [lng, lat],Leaflet 要 [lat, lng]
-      const line = seg.path.map(([lng, lat]) => [lat, lng])
+      // 后端路径是 [lng, lat](WGS-84),Leaflet 要 [lat, lng],再过投影
+      const line = seg.path.map(([lng, lat]) => project(lat, lng))
       if (line.length < 2) return
       L.polyline(line, {
         // 颜色来自 theme.js 的语义色表:图例和折线永远同色。
@@ -56,26 +59,31 @@ export function MapView({ mapApi, points, segments, onAddFromMap, fab }) {
     })
 
     // 画完路线自动缩放到能装下整条路线;只有点没有路线时对齐所有点。
+    // bounds 必须用投影后的坐标:GCJ-02 底图上拿 WGS-84 框会错位。
     const bounds = L.latLngBounds([
-      ...points.map((p) => [p.lat, p.lng]),
-      ...segments.flatMap((seg) => seg.path.map(([lng, lat]) => [lat, lng])),
+      ...points.map((p) => project(p.lat, p.lng)),
+      ...segments.flatMap((seg) => seg.path.map(([lng, lat]) => project(lat, lng))),
     ])
     if (bounds.isValid()) {
       map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 })
     }
-  }, [map, points, segments])
+  }, [map, points, segments, project])
 
   // ── effect B:点地图加一个点 ──
   useEffect(() => {
     if (!map) return
 
-    const handler = (e) => onAddFromMap({ lat: e.latlng.lat, lng: e.latlng.lng })
+    const handler = (e) => {
+      // 地图坐标(GCJ-02 底图上是加密坐标) → 数据坐标(WGS-84)再进点列表
+      const [lat, lng] = unproject(e.latlng.lat, e.latlng.lng)
+      onAddFromMap({ lat, lng })
+    }
     map.on('click', handler)
 
     // 清理函数必须摘掉监听:否则 onAddFromMap 每次变化都会叠加一个监听,
     // 一次点击会加入多个点。
     return () => map.off('click', handler)
-  }, [map, onAddFromMap])
+  }, [map, onAddFromMap, unproject])
 
   const ready = status === 'ready'
 
@@ -110,7 +118,11 @@ export function MapView({ mapApi, points, segments, onAddFromMap, fab }) {
         </div>
       )}
 
-      {ready && <div className="attribution">地图数据 © OpenStreetMap 贡献者</div>}
+      {ready && (
+        <div className="attribution">
+          {getMapMode() === 'amap' ? '底图 © 高德地图' : '地图数据 © OpenStreetMap 贡献者'}
+        </div>
+      )}
     </div>
   )
 }

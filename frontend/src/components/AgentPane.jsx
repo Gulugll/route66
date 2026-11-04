@@ -45,8 +45,50 @@ function truncate(s, n) {
   return s.length > n ? s.slice(0, n) + '…' : s
 }
 
+/**
+ * HITL 确认卡片:RouteBot 在歧义地点/出行方式两个决策点暂停等人拍板。
+ * 有选项渲染按钮组;同时保留自由输入(选项都不合适时用户可以自己说)。
+ * busy 中禁点 —— 答复正在续跑,重复提交会产生两个方案。
+ */
+function ConfirmCard({ prompt, options, busy, onAnswer }) {
+  const [text, setText] = useState('')
+  const submitText = () => {
+    const v = text.trim()
+    if (!v || busy) return
+    setText('')
+    onAnswer(v)
+  }
+  return (
+    <div className="msg msg-confirm">
+      <div className="confirm-q">{prompt}</div>
+      {options.length > 0 && (
+        <div className="confirm-options">
+          {options.map((opt) => (
+            <button key={opt} className="confirm-opt" disabled={busy} onClick={() => onAnswer(opt)}>
+              {opt}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="confirm-free">
+        <input
+          type="text"
+          value={text}
+          disabled={busy}
+          placeholder={options.length > 0 ? '都不合适？自己填一个' : '输入你的答复…'}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submitText()
+          }}
+        />
+        <button onClick={submitText} disabled={busy || !text.trim()}>确定</button>
+      </div>
+    </div>
+  )
+}
+
 export function AgentPane({ onCollapse, onPlan }) {
-  const { threads, busy, unavailable, streamText, thinkText, send } = useAgent({ onPlan })
+  const { threads, busy, unavailable, streamText, thinkText, send, respond, clear } = useAgent({ onPlan })
   const [input, setInput] = useState('')
   const inputRef = useRef(null)
   // 消息区自动滚底:新气泡/流式增量出现时跟随,用户手动上滚则不打扰
@@ -109,6 +151,12 @@ export function AgentPane({ onCollapse, onPlan }) {
           }
           if (m.kind === 'steps') {
             return <ToolSteps key={i} steps={m.steps} />
+          }
+          if (m.kind === 'confirm') {
+            return (
+              <ConfirmCard key={i} prompt={m.prompt} options={m.options} busy={busy}
+                onAnswer={(answer) => respond(m.sessionId, answer)} />
+            )
           }
           if (m.kind === 'error') {
             return <div key={i} className="msg msg-error">{m.text}</div>

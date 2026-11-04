@@ -15,7 +15,7 @@ import { useLeaflet } from '../hooks/useLeaflet.js'
 import { MODE_COLORS } from '../theme.js'
 
 export function PostMap({ snapshot }) {
-  const { containerRef, map, status } = useLeaflet()
+  const { containerRef, map, status, project } = useLeaflet()
 
   useEffect(() => {
     if (status !== 'ready' || !map || !snapshot?.points?.length) return
@@ -24,8 +24,10 @@ export function PostMap({ snapshot }) {
     const layer = L.layerGroup()
 
     // 点标记:序号圆点 + 常驻地名标签(tooltip 常开,小地图上没有悬停语境)
+    // 坐标必须过投影关口:高德模式下底图是 GCJ-02(见 useLeaflet)
     pts.forEach((p, i) => {
-      L.circleMarker([p.lat, p.lng], {
+      const [mlat, mlng] = project(p.lat, p.lng)
+      L.circleMarker([mlat, mlng], {
         radius: 6,
         color: '#fff',
         weight: 2,
@@ -40,27 +42,21 @@ export function PostMap({ snapshot }) {
     for (let i = 0; i < pts.length - 1; i++) {
       const a = pts[i]
       const b = pts[i + 1]
-      L.polyline(
-        [
-          [a.lat, a.lng],
-          [b.lat, b.lng],
-        ],
-        {
-          color: MODE_COLORS[a.legMode] || MODE_COLORS.driving,
-          weight: 3,
-          opacity: 0.85,
-        }
-      ).addTo(layer)
+      L.polyline([project(a.lat, a.lng), project(b.lat, b.lng)], {
+        color: MODE_COLORS[a.legMode] || MODE_COLORS.driving,
+        weight: 3,
+        opacity: 0.85,
+      }).addTo(layer)
     }
 
     layer.addTo(map)
     // fitBounds 把视野收进路线范围 —— 小地图只有这一条路线,没理由看全国
-    map.fitBounds(L.latLngBounds(pts.map((p) => [p.lat, p.lng])).pad(0.25))
+    map.fitBounds(L.latLngBounds(pts.map((p) => project(p.lat, p.lng))).pad(0.25))
 
     return () => {
       layer.remove() // snapshot 变化/卸载时清图层,防叠加
     }
-  }, [map, status, snapshot])
+  }, [map, status, snapshot, project])
 
   return <div ref={containerRef} className="post-map" />
 }

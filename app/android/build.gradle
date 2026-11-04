@@ -1,0 +1,23 @@
+buildscript {
+    ext {
+        buildToolsVersion = "37.0.0"
+        minSdkVersion = 24
+        // 模板默认 37；本机镜像渠道没有 android-37 平台包，降到 36（react-android 的 target 即 36，未用 37 API）
+        compileSdkVersion = 36
+        targetSdkVersion = 36
+        // 模板 27.1.12297006；本机镜像渠道装的是 r28c（28.2.13676358），对齐后避免 AGP auto-install
+        ndkVersion = "28.2.13676358"
+        kotlinVersion = "2.2.0"
+    }
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle")
+        classpath("com.facebook.react:react-native-gradle-plugin")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
+    }
+}
+
+apply plugin: "com.facebook.react.rootproject"

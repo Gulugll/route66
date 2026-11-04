@@ -125,6 +125,11 @@ export async function fetchRoute(a, b, mode) {
 
 // ── 认证与公开配置（会话靠 HttpOnly cookie，前端不碰任何 token）──
 
+/** 公开配置:当前地图模式(amap|oss)+ 高德 JS key(仅 amap 模式有意义)。无需登录。 */
+export function fetchPublicConfig() {
+  return request('/config/public')
+}
+
 /** 注册新用户。后端注册成功会顺带登录（发会话 cookie）。 */
 export function registerUser(username, password) {
   return request('/auth/register', {
@@ -256,7 +261,27 @@ export async function streamAgent(messages, { signal, onEvent } = {}) {
     body: JSON.stringify({ messages }),
     signal,
   })
+  return consumeAgentResponse(resp, onEvent)
+}
 
+/**
+ * HITL 确认后的续跑：用户在确认卡片上答复，服务端凭 session_id 恢复循环。
+ * 事件流形状与 streamAgent 相同（step/delta/think/done/error/confirm）。
+ * @param {string} sessionId /agent confirm 事件下发的会话 id
+ * @param {string} answer 用户的答复（选项原文或自由输入）
+ */
+export async function resumeAgent(sessionId, answer, { signal, onEvent } = {}) {
+  const resp = await fetch('/agent/resume', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, answer }),
+    signal,
+  })
+  return consumeAgentResponse(resp, onEvent)
+}
+
+// consumeAgentResponse 统一处理 NDJSON 响应：非 2xx 归一错误，2xx 逐行回调。
+async function consumeAgentResponse(resp, onEvent) {
   if (!resp.ok) {
     let data = null
     try {

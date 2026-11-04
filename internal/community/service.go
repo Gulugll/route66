@@ -299,7 +299,7 @@ func (s *Service) Unlike(ctx context.Context, userID, postID int64) (int, error)
 }
 
 // countOf 读最新计数。比"事务返回值带出计数"多一次主键查询,
-// 但换来 store 接口的事务方法保持简单 —— 教学规模下清晰优先。
+// 但换来 store 接口的事务方法保持简单 —— 当前规模下清晰优先。
 func (s *Service) countOf(ctx context.Context, postID int64) (int, error) {
 	v, err := s.store.GetByID(ctx, postID)
 	if err != nil {

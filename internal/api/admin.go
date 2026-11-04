@@ -125,7 +125,7 @@ func (s *Server) adminPutKeys(c *gin.Context) {
 	s.adminGetKeys(c)
 }
 
-// adminListUsers 用户列表。教学规模全量返回,不分页 ——
+// adminListUsers 用户列表。当前规模全量返回,不分页 ——
 // 等用户多到需要分页的那天,再顺手加 LIMIT/OFFSET,现在做是过度设计。
 func (s *Server) adminListUsers(c *gin.Context) {
 	users, err := s.auth.ListUsers(c.Request.Context())

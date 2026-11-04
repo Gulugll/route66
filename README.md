@@ -176,6 +176,17 @@ npm run dev        # http://localhost:5173, /plan /search /route 已代理到 78
 > Go 侧托管逻辑在 `router.go`：`r.NoRoute(http.FileServer(http.Dir("web")))`，
 > 产物落在 `web/` 即出现在根路径，无需新增路由。
 
+## RN 跨端 App（app/）
+
+`app/` 是 React Native 0.88 跨端应用（iOS / macOS / Android / Windows），
+复用同一套 Go 后端：规划核心（搜索 / 加点 / 混合出行 / TSP 规划 / 画线 / 降级警告）已对齐 Web 版，
+地图用 WebView 内嵌 Leaflet，设计 token 与 Web 前端同源。
+构建步骤与各端前置条件见 [docs/rn-app.md](docs/rn-app.md)。
+
+```bash
+cd app && npm install && npm start   # Metro 开发服务器（8081）
+```
+
 ## 部署
 
 `docker compose up -d` 已覆盖全部外部依赖，应用本身是单个 Go 二进制 + 静态前端：
@@ -204,17 +215,21 @@ set -a; source .env; set +a
 
 ## 距离与搜索来源
 
-| 能力 | 默认 | 遗留可选 | 全部失败时 |
-|---|---|---|---|
-| 距离矩阵 / 路网轨迹 | Valhalla（自托管，`VALHALLA_URL`） | 高德（`DISTANCE_SOURCE=amap` + `AMAP_KEY`） | haversine 直线估算，`is_degraded=true` |
-| 地名搜索 | Photon 公共实例（`PHOTON_URL`，大陆网络可达；`SEARCH_SOURCE=nominatim` 可切 Nominatim） | — | 502，错误信息可行动 |
-| 公交模式 | 无开源路网，自动降级直线估算并逐段标注 | 高德真实公交距离 | 同左 |
+距离来源即"地图模式"，`DISTANCE_SOURCE` 是唯一开关：
 
-坐标系统一为 WGS-84：OSM 数据、Leaflet 底图、Valhalla 引擎三者同系，
-全链路无 GCJ-02 偏移转换。坐标经纬顺序对外契约不变（`/route` 经度在前）。
+| 模式 | `DISTANCE_SOURCE` | 距离 / 轨迹 | 前端底图 | 坐标系 |
+|---|---|---|---|---|
+| 开源模式（默认） | `valhalla` | Valhalla（自托管，`VALHALLA_URL`） | OpenStreetMap（openstreetmap.de） | WGS-84 |
+| 高德模式 | `amap`（需 `AMAP_KEY`） | 高德 Web 服务 API | 高德 XYZ 瓦片 | 数据层 WGS-84，渲染层 GCJ-02 |
 
-高德作为遗留来源保留：`internal/amap` 及其测试原样可用，`DISTANCE_SOURCE=amap`
-时切回（key 从管理台 DB 读取，env 兜底，改 key 不重启生效）。
+- 当前模式经 `GET /config/public` 的 `mode` 字段下发，前端据此切换底图并在渲染层
+  做 WGS-84 ↔ GCJ-02 转换（`frontend/src/gcj02.js`），点列表、路线、点击取点的
+  数据契约不变 —— 换模式只影响底图与渲染，API 与存储始终 WGS-84（经度在前）。
+- 高德作为遗留来源保留：`internal/amap` 及其测试原样可用（key 从管理台 DB 读取，
+  env 兜底，改 key 不重启生效）。高德 API 服务条款限制商用部署，上线请用开源模式。
+- 搜索不随模式切换，固定 Photon（`PHOTON_URL`，大陆可达；`SEARCH_SOURCE=nominatim`
+  可切 Nominatim）。公交模式两种来源都无真实公交路网轨迹，自动降级直线估算并逐段标注。
+- 全部距离来源失败时降级 haversine 直线估算，`is_degraded=true`。
 
 ## API
 
@@ -579,6 +594,7 @@ route66/
 │   ├── vite.config.js          # base:'/' + outDir:'../web' + dev 代理到 7800
 │   └── package.json
 ├── admin/                  # 管理台(原生 HTML 单页)
+├── app/                    # RN 跨端 App(iOS/macOS/Android/Windows,见 docs/rn-app.md)
 ├── web/                    # 前端构建产物(gitignore)
 ├── docs/superpowers/       # 设计文档产物(gitignore)
 └── scripts/smoke.sh        # 真实 key 冒烟测试

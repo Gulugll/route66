@@ -1,0 +1,138 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="第 1 页" id="f3-WBdU3tKwByGWnKlM5">
+    <mxGraphModel dx="694" dy="622" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="8J9re41T8I8xNsNN9-D1-23" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillStyle=auto;dashed=1;strokeWidth=1;strokeColor=#000000;fillColor=default;align=right;" value="绘制路径&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&amp;nbsp;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="275" width="270" x="30" y="475" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-22" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillStyle=auto;dashed=1;strokeWidth=1;strokeColor=#000000;fillColor=default;align=right;" value="标记位置&amp;nbsp;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="180" width="270" x="30" y="190" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-3" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="8J9re41T8I8xNsNN9-D1-2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="入口prompt" vertex="1">
+          <mxGeometry height="60" width="120" x="40" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-5" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="8J9re41T8I8xNsNN9-D1-4" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="地点筛选" vertex="1">
+          <mxGeometry height="60" width="120" x="40" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-7" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="8J9re41T8I8xNsNN9-D1-6" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-4" parent="1" style="whiteSpace=wrap;html=1;rounded=0;" value="工具调用：地点标记" vertex="1">
+          <mxGeometry height="60" width="120" x="40" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-9" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="8J9re41T8I8xNsNN9-D1-8" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-12" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="8J9re41T8I8xNsNN9-D1-11" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-6" parent="1" style="rhombus;whiteSpace=wrap;html=1;shapeInside=1;rounded=0;" value="出现歧义地点" vertex="1">
+          <mxGeometry height="80" width="80" x="60" y="280" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-10" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;exitX=0.5;exitY=0;exitDx=0;exitDy=0;" target="8J9re41T8I8xNsNN9-D1-4">
+          <mxGeometry relative="1" x="-0.2857" as="geometry">
+            <mxPoint x="460" y="450" as="sourcePoint" />
+            <mxPoint x="420" y="310" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-8" parent="1" style="whiteSpace=wrap;html=1;rounded=0;" value="HITL用户" vertex="1">
+          <mxGeometry height="60" width="120" x="160" y="290" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-14" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="8J9re41T8I8xNsNN9-D1-16" value="">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="220" y="760" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-11" parent="1" style="whiteSpace=wrap;html=1;rounded=0;" value="工具调用：生成距离矩阵（防止多次调用api产生额外费用以及IO阻塞）" vertex="1">
+          <mxGeometry height="60" width="120" x="40" y="390" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-19" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="8J9re41T8I8xNsNN9-D1-18" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-21" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="8J9re41T8I8xNsNN9-D1-20" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-15" parent="1" style="rhombus;whiteSpace=wrap;html=1;shapeInside=1;" value="&lt;div&gt;是否全自动模式&lt;/div&gt;" vertex="1">
+          <mxGeometry height="80" width="80" x="60" y="570" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-17" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="8J9re41T8I8xNsNN9-D1-15">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-16" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="HITL询问用户，弹出卡片，询问出行方式" vertex="1">
+          <mxGeometry height="60" width="120" x="40" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-18" parent="1" style="whiteSpace=wrap;html=1;" value="调API，直接获取响应的路径信息and路线图" vertex="1">
+          <mxGeometry height="60" width="120" x="40" y="680" as="geometry" />
+        </mxCell>
+        <mxCell id="8J9re41T8I8xNsNN9-D1-20" parent="1" style="whiteSpace=wrap;html=1;" value="ai判断，最优解，从互联网检索or根据距离自我判断" vertex="1">
+          <mxGeometry height="60" width="120" x="160" y="580" as="geometry" />
+        </mxCell>
+        <mxCell id="N-legend" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F7;strokeColor=#666666;fontSize=11;" value="&lt;b&gt;接入设计 v1&lt;/b&gt;&lt;div&gt;绿 = 已有零件直接复用&lt;/div&gt;&lt;div&gt;黄 = 需新增 / 改造&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="240" x="420" y="10" as="geometry" />
+        </mxCell>
+        <mxCell id="N-agentloop" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;spacing=4;fontSize=11;" value="&lt;b&gt;Agent 循环（已有）&lt;/b&gt;&lt;div&gt;internal/agent/loop.go&lt;/div&gt;&lt;div&gt;ReAct + OnStep/OnDelta 流式回调&lt;/div&gt;&lt;div&gt;App 侧新增：聊天面板（复用 RouteBot 交互）&lt;/div&gt;" vertex="1">
+          <mxGeometry height="70" width="240" x="420" y="85" as="geometry" />
+        </mxCell>
+        <mxCell id="N-search" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;spacing=4;fontSize=11;" value="&lt;b&gt;search_place 工具（已有）&lt;/b&gt;&lt;div&gt;→ geo.Source / Photon&lt;/div&gt;&lt;div&gt;返回候选列表（name/address/坐标）&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="240" x="420" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="N-mapbridge" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;spacing=4;fontSize=11;" value="&lt;b&gt;地图标记桥（已有）&lt;/b&gt;&lt;div&gt;RN: bridge.ts addMarker / Web: useLeaflet&lt;/div&gt;&lt;div&gt;AI 标记 = 复用现有画点链路&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="240" x="420" y="245" as="geometry" />
+        </mxCell>
+        <mxCell id="N-hitlplace" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;align=left;spacing=4;fontSize=11;" value="&lt;b&gt;候选确认卡片（新增 HITL 钩子）&lt;/b&gt;&lt;div&gt;agent 循环暂停 → App 弹候选卡片&lt;/div&gt;&lt;div&gt;→ 用户选择回填工具结果 → 循环继续&lt;/div&gt;" vertex="1">
+          <mxGeometry height="70" width="240" x="420" y="320" as="geometry" />
+        </mxCell>
+        <mxCell id="N-matrix" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;spacing=4;fontSize=11;" value="&lt;b&gt;matrix.Service + Redis 缓存（已有，零改造）&lt;/b&gt;&lt;div&gt;批量接口 + 信号量限 4 路 + TTL 24h&lt;/div&gt;&lt;div&gt;正是“防重复 API 费用与 IO 阻塞”的落地&lt;/div&gt;" vertex="1">
+          <mxGeometry height="70" width="240" x="420" y="405" as="geometry" />
+        </mxCell>
+        <mxCell id="N-hitlmode" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;align=left;spacing=4;fontSize=11;" value="&lt;b&gt;出行方式卡片（新增 HITL 钩子）&lt;/b&gt;&lt;div&gt;数据结构复用 ModeSelector/legMode（已有）&lt;/div&gt;&lt;div&gt;agent 循环内改为弹卡片询问&lt;/div&gt;" vertex="1">
+          <mxGeometry height="70" width="240" x="420" y="490" as="geometry" />
+        </mxCell>
+        <mxCell id="N-tsp" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;spacing=4;fontSize=11;" value="&lt;b&gt;距离推理 = /plan + 手写 TSP（已有）&lt;/b&gt;&lt;div&gt;AI 不自己算距离，把“最优”委托给&lt;/div&gt;&lt;div&gt;确定性算法（可测试、毫秒级）&lt;/div&gt;" vertex="1">
+          <mxGeometry height="70" width="240" x="420" y="580" as="geometry" />
+        </mxCell>
+        <mxCell id="N-websearch" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;align=left;spacing=4;fontSize=11;" value="&lt;b&gt;web_search 工具（新增，二期）&lt;/b&gt;&lt;div&gt;互联网检索辅助判断（营业状态/&lt;/div&gt;&lt;div&gt;门票/顺路推荐），结果喂回模型&lt;/div&gt;" vertex="1">
+          <mxGeometry height="70" width="240" x="420" y="665" as="geometry" />
+        </mxCell>
+        <mxCell id="N-planapi" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;spacing=4;fontSize=11;" value="&lt;b&gt;POST /plan manual=true（已有）&lt;/b&gt;&lt;div&gt;半自动：直接按确认过的顺序出路线图&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="240" x="420" y="750" as="geometry" />
+        </mxCell>
+        <mxCell id="NE-1" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-1" target="N-agentloop" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeColor=#666666;endArrow=open;" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="NE-2" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-2" target="N-search" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeColor=#666666;endArrow=open;" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="NE-3" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-4" target="N-mapbridge" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeColor=#666666;endArrow=open;" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="NE-4" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-8" target="N-hitlplace" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeColor=#666666;endArrow=open;" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="NE-5" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-11" target="N-matrix" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeColor=#666666;endArrow=open;" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="NE-6" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-16" target="N-hitlmode" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeColor=#666666;endArrow=open;" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="NE-7" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-20" target="N-tsp" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeColor=#666666;endArrow=open;" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="NE-8" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-20" target="N-websearch" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeColor=#666666;endArrow=open;" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="NE-9" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-18" target="N-planapi" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeColor=#666666;endArrow=open;" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

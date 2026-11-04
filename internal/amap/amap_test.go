@@ -82,7 +82,7 @@ func TestDistanceMatrixRequestsAndConversion(t *testing.T) {
 		t.Fatalf("DistanceMatrix: %v", err)
 	}
 
-	// 教学点:请求格式必须和高德文档+实测一致,这里就是"契约"。
+	// 请求格式必须和高德文档+实测一致,这里就是"契约"。
 	// 逐列批量:一次请求 = 多个起点 origins + 单个终点 destination,
 	// 格式是"经度,纬度"(注意经度在前,和 model.Point 字段顺序相反)。
 	//

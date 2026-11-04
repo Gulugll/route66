@@ -26,4 +26,8 @@ type Source interface {
 	// HasAPIKey 此刻是否具备调用能力。key 型来源(高德)返回"key 是否已配置",
 	// 自托管来源(Valhalla)装配即 true;请求级故障一律走 error + 降级。
 	HasAPIKey() bool
+
+	// Kind 模式标识:"amap"(高德模式)| "oss"(开源模式)。
+	// 随 /config/public 下发,前端据此切换底图与坐标系(高德瓦片是 GCJ-02)。
+	Kind() string
 }
