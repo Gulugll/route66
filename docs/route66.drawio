@@ -75,7 +75,7 @@
         <mxCell id="8J9re41T8I8xNsNN9-D1-20" parent="1" style="whiteSpace=wrap;html=1;" value="ai判断，最优解，从互联网检索or根据距离自我判断" vertex="1">
           <mxGeometry height="60" width="120" x="160" y="580" as="geometry" />
         </mxCell>
-        <mxCell id="N-legend" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F7;strokeColor=#666666;fontSize=11;" value="&lt;b&gt;接入设计 v1&lt;/b&gt;&lt;div&gt;绿 = 已有零件直接复用&lt;/div&gt;&lt;div&gt;黄 = 需新增 / 改造&lt;/div&gt;" vertex="1">
+        <mxCell id="N-legend" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F7;strokeColor=#666666;fontSize=11;" value="&lt;b&gt;接入设计 v1（已落地 2026-11-03）&lt;/b&gt;&lt;div&gt;实现流程见第 2 页&lt;/div&gt;&lt;div&gt;绿 = 复用已有 / 黄 = 新增&lt;/div&gt;" vertex="1">
           <mxGeometry height="60" width="240" x="420" y="10" as="geometry" />
         </mxCell>
         <mxCell id="N-agentloop" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;spacing=4;fontSize=11;" value="&lt;b&gt;Agent 循环（已有）&lt;/b&gt;&lt;div&gt;internal/agent/loop.go&lt;/div&gt;&lt;div&gt;ReAct + OnStep/OnDelta 流式回调&lt;/div&gt;&lt;div&gt;App 侧新增：聊天面板（复用 RouteBot 交互）&lt;/div&gt;" vertex="1">
@@ -130,6 +130,98 @@
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="NE-9" edge="1" parent="1" source="8J9re41T8I8xNsNN9-D1-18" target="N-planapi" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeColor=#666666;endArrow=open;" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="实现流程（2026-11-03 落地）" id="p2-impl-flow">
+    <mxGraphModel dx="694" dy="622" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="p2-0" />
+        <mxCell id="p2-1" parent="p2-0" />
+        <mxCell id="p2-note" parent="p2-1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F7;strokeColor=#666666;fontSize=11;align=left;spacing=6;" value="&lt;b&gt;Agent + HITL 实现流程&lt;/b&gt;&lt;div&gt;左：正常 ReAct 循环&lt;/div&gt;&lt;div&gt;右：暂停-恢复式人工确认&lt;/div&gt;&lt;div&gt;对应用户草图（第 1 页），&lt;/div&gt;&lt;div&gt;web_search 互联网检索为二期&lt;/div&gt;" vertex="1">
+          <mxGeometry height="90" width="220" x="420" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-n1" parent="p2-1" style="rounded=0;whiteSpace=wrap;html=1;" value="用户输入问题（聊天面板）" vertex="1">
+          <mxGeometry height="50" width="220" x="30" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-n2" parent="p2-1" style="rounded=0;whiteSpace=wrap;html=1;" value="POST /agent（NDJSON 流式：step / delta / think / confirm / done）" vertex="1">
+          <mxGeometry height="60" width="220" x="30" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-n3" parent="p2-1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="Agent 循环（loop.go runLoop）模型 → 工具 → 结果回填历史" vertex="1">
+          <mxGeometry height="60" width="220" x="30" y="230" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-n4" parent="p2-1" style="rhombus;whiteSpace=wrap;html=1;" value="工具调用" vertex="1">
+          <mxGeometry height="80" width="100" x="60" y="340" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-n5" parent="p2-1" style="rounded=0;whiteSpace=wrap;html=1;" value="普通工具：search_place / plan_route（→ planner.Compute + 手写 TSP）" vertex="1">
+          <mxGeometry height="60" width="220" x="20" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-n6" parent="p2-1" style="rhombus;whiteSpace=wrap;html=1;" value="需要用户确认？" vertex="1">
+          <mxGeometry height="90" width="110" x="220" y="335" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-n7" parent="p2-1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="ConfirmError → 循环暂停（ConfirmNeeded）" vertex="1">
+          <mxGeometry height="50" width="220" x="420" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-n8" parent="p2-1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="Pending 存内存会话（agent_session.go：取即删防重放，TTL 15min）" vertex="1">
+          <mxGeometry height="60" width="220" x="420" y="260" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-n9" parent="p2-1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="confirm 事件（本次流结束）→ 前端弹确认卡片（AgentPane ConfirmCard）" vertex="1">
+          <mxGeometry height="60" width="220" x="420" y="360" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-n10" parent="p2-1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="用户点选候选地点 / 出行方式" vertex="1">
+          <mxGeometry height="50" width="220" x="420" y="460" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-n11" parent="p2-1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="POST /agent/resume（session_id + answer；重复/过期 410）" vertex="1">
+          <mxGeometry height="60" width="220" x="420" y="550" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-n12" parent="p2-1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="RunConfirmed(answer) 重跑该工具 → 真实结果回填 → Resume 继续循环（支持链式确认）" vertex="1">
+          <mxGeometry height="70" width="220" x="420" y="650" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-n13" parent="p2-1" style="rounded=0;whiteSpace=wrap;html=1;" value="done：最终答案 + 规划结果同步工作台" vertex="1">
+          <mxGeometry height="50" width="220" x="20" y="600" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-e1" parent="p2-1" edge="1" source="p2-n1" target="p2-n2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-e2" parent="p2-1" edge="1" source="p2-n2" target="p2-n3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-e3" parent="p2-1" edge="1" source="p2-n3" target="p2-n4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-e4" parent="p2-1" edge="1" source="p2-n4" target="p2-n5" value="普通工具 / 直通（候选 ≤1）" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;fontSize=10;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-e5" parent="p2-1" edge="1" source="p2-n5" target="p2-n3" value="结果回填历史" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.5;entryX=0;entryY=0.5;fontSize=10;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-e6" parent="p2-1" edge="1" source="p2-n4" target="p2-n6" value="确认工具" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;fontSize=10;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-e7" parent="p2-1" edge="1" source="p2-n6" target="p2-n7" value="有歧义 / 方式待定" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=0;entryX=0;entryY=0.5;fontSize=10;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-e8" parent="p2-1" edge="1" source="p2-n7" target="p2-n8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-e9" parent="p2-1" edge="1" source="p2-n8" target="p2-n9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-e10" parent="p2-1" edge="1" source="p2-n9" target="p2-n10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-e11" parent="p2-1" edge="1" source="p2-n10" target="p2-n11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-e12" parent="p2-1" edge="1" source="p2-n11" target="p2-n12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-e13" parent="p2-1" edge="1" source="p2-n12" target="p2-n3" value="从断点恢复" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.5;entryX=1;entryY=0.5;fontSize=10;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p2-e14" parent="p2-1" edge="1" source="p2-n5" target="p2-n13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
       </root>

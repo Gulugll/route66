@@ -16,47 +16,54 @@
 
 Route66 是一个多点路径规划服务：输入一串地点，自动计算总距离最短的访问顺序（TSP），
 支持驾车 / 步行 / 公交三种出行方式，以及每段路独立选择方式的混合出行。
-距离数据来自高德 Web 服务 API，高德不可用时自动降级为 haversine 直线估算并在响应中显式标注。
+距离与底图提供两种模式：**开源模式**（Valhalla 自托管 + OSM，可公开部署）与
+**高德模式**（高德 Web 服务 + 高德瓦片，个人使用），`.env` 一个开关切换；
+来源不可用时自动降级为直线估算并在响应中显式标注。
 
-后端为 Go 单进程（Gin + Redis + PostgreSQL），前端为 React 19 + Vite，
-由 Go 进程同源托管，无 CORS。另提供一个基于手写 ReAct 循环的智能体，
-可由 LLM 自主组合「地点搜索」与「路线规划」工具完成任务。
+后端为 Go 单进程（Gin + MySQL + Redis），Web 前端为 React 19 + Vite，由 Go 进程同源托管。
+同一套后端服务多类客户端：Web 浏览器、React Native 跨端 App（`app/`）、Electron 桌面壳（`desktop/`）。
+内置手写 ReAct 智能体（RouteBot）：LLM 自主组合「地点搜索」「路线规划」等工具完成规划，
+在歧义地点与出行方式两处暂停并弹卡片等用户确认（HITL，人工副驾），确认后从断点恢复继续规划。
 
 ## 功能特性
 
 | 特性 | 说明 |
 |---|---|
 | TSP 路径优化 | 手写求解器：最近邻 → 2-opt → 模拟退火 |
-| 多出行方式 | 驾车 / 步行 / 公交，各走高德对应接口 |
+| 多出行方式 | 驾车 / 步行 / 公交，各走对应来源接口 |
 | 混合出行 | 每段路独立指定方式（`segments` 参数） |
-| 拖拽排序 | 原生 HTML5 DnD，零第三方依赖 |
-| React 前端 | React 19 + Vite，受控组件 + hooks |
-| 地图交互 | 高德 JS API 2.0：点选加地点、地名搜索、彩色路线与图例 |
-| 双重缓存 | Redis 优先，不可用降级进程内 map，TTL 24h |
-| 优雅降级 | 高德失败回退 haversine，降级信息随响应回传（`is_degraded`） |
-| 认证与管理台 | PostgreSQL 可选：用户系统、API 级登录墙、高德 key 管理台热更换 |
+| 双地图模式 | 开源（Valhalla + OSM）/ 高德（Web 服务 + 瓦片）一个开关切换，前端底图与坐标投影自动跟随 |
+| 智能 Agent + HITL | 手写 ReAct 循环：歧义地点、出行方式暂停弹卡等确认，确认后从断点恢复继续规划 |
+| 社区 Feed | 路线笔记发布、点赞评论、路线快照分享与一键导入 |
+| 认证与管理台 | MySQL：用户系统、API 级登录墙、高德 / LLM key 管理台热更换 |
 | 异步任务 | Redis Stream 消费组 + 后台 worker，长任务提交后轮询 |
-| 智能 Agent | 手写 ReAct 循环，模型自主调用业务工具，全过程可观察 |
+| 拖拽排序 | 原生 HTML5 DnD，零第三方依赖 |
+| 双重缓存 | Redis 优先，不可用降级进程内 map，TTL 24h |
+| 优雅降级 | 来源失败回退直线估算，降级信息随响应回传（`is_degraded`） |
+| 多端交付 | Web（React 19）/ 跨端 App（React Native）/ 桌面（Electron 壳）共用同一后端 |
 
 ## 架构
 
 ```
-                    ┌──────────────────────────────┐
-  浏览器(前端)        │        Go 后端 (Gin)          │
-  ┌─────────┐       │  ┌────────────────────────┐  │      ┌────────────┐
-  │ React    │──────▶│  │  /plan  /search /route │  │─────▶│  高德 Web   │
-  │ 高德JSAPI│       │  │   (API 代理层)          │  │      │  服务 API   │
-  │ Vite 产物│       │  └──────────┬─────────────┘  │      └────────────┘
-  └─────────┘       │             │                │
-                    │  ┌──────────▼─────────────┐  │      ┌────────────┐
-                    │  │  matrix (距离矩阵)       │  │      │ Redis/内存  │
-                    │  │  solver (手写 TSP)       │  │◀────▶│  距离缓存   │
-                    │  └────────────────────────┘  │      └────────────┘
-                    └──────────────────────────────┘
+  Web 浏览器 / RN App /          ┌─────────────────────────────────────┐
+  Electron 桌面                  │           Go 后端 (Gin)              │
+  ┌──────────────┐              │  ┌─────────────────────────────┐    │      ┌────────────────┐
+  │ React 19 /   │              │  │ /plan /agent /search /route │    │─────▶│ 高德 Web 服务   │
+  │ RN + WebView │─────HTTP────▶│  │ /auth /community (API 编排)  │    │      │ 或 Valhalla    │
+  │ + Leaflet    │              │  └────────────┬────────────────┘    │      │ + Photon       │
+  └──────────────┘              │  ┌────────────▼────────────────┐    │      └────────────────┘
+                                │  │ matrix (距离) / solver (TSP) │    │      ┌────────────────┐
+  ┌──────────────┐              │  │ agent (ReAct + HITL 会话)    │    │◀────▶│ Redis 距离缓存  │
+  │ 管理台 :7801 │─────────────▶│  └─────────────────────────────┘    │      └────────────────┘
+  └──────────────┘              │  ┌─────────────────────────────┐    │
+                                │  │ MySQL (gorm)：用户/帖子/key 配置│    │
+                                │  └─────────────────────────────┘    │
+                                └─────────────────────────────────────┘
 ```
 
-分层设计：`api`(编排) / `matrix`(距离来源) / `solver`(TSP) / `geo`(来源接口) /
-`cache`(缓存抽象)——低耦合，面向接口。距离来源、求解算法、缓存实现的替换均不影响调用方。
+分层设计：`api`(编排) / `planner`(解算) / `matrix`(距离来源) / `solver`(TSP) /
+`agent`(智能体) / `geo`(来源接口) / `cache`(缓存抽象)——低耦合，面向接口。
+距离来源、求解算法、缓存实现的替换均不影响调用方。
 
 **包依赖关系**（单向无环，`internal/` 强制封装）：
 
@@ -64,35 +71,43 @@ Route66 是一个多点路径规划服务：输入一串地点，自动计算总
 graph LR
     MAIN["main.go<br/>装配层"]
     API["internal/api"]
+    AG["internal/agent"]
+    PL["internal/planner"]
     MX["internal/matrix"]
-    AM["internal/amap"]
     SOL["internal/solver"]
+    GEO["internal/geo"]
+    AM["internal/amap"]
+    VH["internal/valhalla"]
+    SET["internal/settings"]
     CA["internal/cache"]
-    MOD["internal/model"]
-    CFG["internal/config"]
 
-    MAIN --> CFG
-    MAIN --> CA
-    MAIN --> AM
-    MAIN --> MX
     MAIN --> API
+    MAIN --> AG
+    MAIN --> SET
+    MAIN --> GEO
+    MAIN --> CA
+    API --> AG
+    API --> PL
     API --> MX
-    API --> AM
-    API --> SOL
-    API --> MOD
-    MX --> AM
-    MX --> MOD
-    AM --> CA
-    AM --> MOD
+    API --> SET
+    AG --> PL
+    AG --> MX
+    PL --> MX
+    PL --> SOL
+    PL --> AM
+    MX --> GEO
+    GEO --> AM
+    GEO --> VH
 ```
 
 | 依赖规则 | 原因 |
 |---|---|
 | 依赖方向单向，无环 | 保证包可独立测试、可独立演进为服务 |
-| `solver` 只吃 `[][]float64`，不认识 `amap` | 算法与距离来源解耦 |
+| `geo.Source` 是距离/搜索唯一接口，`amap` / `valhalla` 各自实现 | 双模式切换只动装配层，业务包零感知 |
+| `solver` 只吃 `[][]float64`，不认识任何来源 | 算法与数据来源解耦 |
+| `agent` 复用 `planner.Compute`，不自算路线 | AI 只做编排，"最优"交给确定性算法（可测试、毫秒级） |
 | `api` 不直接计算距离/排序 | 编排层只做参数校验与串联 |
-| `amap` 依赖 `Cache` 接口，不认识 Redis | 依赖倒置：换缓存实现零改动 |
-| `matrix` 位于 `amap` 与 `solver` 之间 | 降级策略集中在一处 |
+| key/LLM 配置统一走 `settings`（DB 优先，env 兜底） | 管理台热更换，改 key 不重启 |
 
 ## 快速开始
 
@@ -101,7 +116,7 @@ graph LR
 - Go 1.26+
 - （可选）Redis 7 —— 不装也能跑，自动降级内存缓存
 - （可选）Node 20+ —— 仅构建/修改前端时需要（源码在 `frontend/`）
-- （可选）PostgreSQL —— 启用认证、异步任务与管理台
+- （可选）MySQL 8 + Docker —— 启用认证、社区、异步任务与管理台
 
 ### 1. 下载地图数据（Valhalla）
 
@@ -132,9 +147,9 @@ open http://localhost:7800
 > Valhalla 容器首次启动会自动建瓦片（视机器 20~60 分钟），期间 `/plan` 会返回
 > 直线估算并在 `is_degraded` 显式标注；瓦片就绪后自动恢复真实路网，无需重启。
 
-### 2.5 登录系统 + 管理台（PostgreSQL，可选）
+### 2.5 登录系统 + 管理台（MySQL，可选）
 
-`docker compose up -d` 已同时拉起 PostgreSQL 与 Redis。配置数据库后启用认证与管理能力；不配置则全部不启用，同步规划不受影响。
+`docker compose up -d mysql` 拉起 MySQL（用户、社区帖子、key 配置都存这里）。配置数据库后启用认证、社区与管理能力；不配置则全部不启用，同步规划不受影响。
 
 | 端口 | 内容 |
 |---|---|
@@ -187,6 +202,9 @@ npm run dev        # http://localhost:5173, /plan /search /route 已代理到 78
 cd app && npm install && npm start   # Metro 开发服务器（8081）
 ```
 
+桌面端另有 **Electron 壳**（`desktop/`）：窗口直接加载 Go 托管的 web 版，业务代码零改动、
+零原生构建依赖（不需要 Xcode / Visual Studio），macOS 已验证，Windows 同壳出 `.exe`。
+
 ## 部署
 
 `docker compose up -d` 已覆盖全部外部依赖，应用本身是单个 Go 二进制 + 静态前端：
@@ -211,7 +229,7 @@ set -a; source .env; set +a
 
 - 前面加一层反向代理（Nginx / Caddy）做 TLS；`ADMIN_PASSWORD` 务必换强密码
 - **key 自备（BYOK）**：每个部署者使用自己申请的高德 key，调用成本与合规责任都落在部署者一侧，项目本身不代理、不转售任何地图服务
-- PostgreSQL 数据在 compose 卷 `pgdata` 中，`docker compose down -v` 才会删除
+- MySQL 数据在 compose 卷 `mysqldata` 中，`docker compose down -v` 才会删除
 
 ## 距离与搜索来源
 
@@ -299,67 +317,97 @@ curl "http://localhost:7800/route?origin=116.3975,39.9087&dest=116.3972,39.9163&
 返回 `[lng,lat]` 坐标数组，前端拼为折线。`mode` 非法返回 400；`mode=transit` 返回空数组
 （公交无连续轨迹，前端退化为直线，属业务事实而非错误）。
 
-## 智能 Agent（手写 ReAct）
+## 智能 Agent（手写 ReAct + HITL）
 
 `internal/agent/` 实现一个手写的最小智能体：不依赖任何 Agent 框架，
 核心循环为「调模型 → 执行模型请求的工具 → 结果回填历史 → 循环」，
 直到模型返回纯文本即最终答案。
+
+在核心循环之上实现了**暂停-恢复式 HITL（人工副驾）**：
+`confirm_place`（歧义地点确认）与 `confirm_mode`（出行方式确认）两类确认工具
+在需要人拍板时返回确认请求，循环暂停并把完整对话状态（含工具消息）存入内存会话，
+前端弹出确认卡片；用户点选后 `POST /agent/resume` 从断点恢复，循环继续。
+无歧义时（候选 0/1 个）确认工具直通返回，不打扰用户。
 
 | 文件 | 角色 | 说明 |
 |---|---|---|
 | `internal/agent/types.go` | 类型 | `Message` / `ToolCall` / `ToolSpec`，对应 OpenAI Chat 协议消息形状 |
 | `internal/agent/model.go` | 模型 | `Model` 接口 + `OpenAICompatible` 实现（DeepSeek / Kimi / Qwen 兼容模式 / Ollama，换厂商只改 BaseURL 与 Model） |
 | `internal/agent/tool.go` | 工具 | `Tool` 接口：`Spec()` 提供说明书，`Run()` 执行 |
-| `internal/agent/loop.go` | 循环 | `Agent.Run()`：ReAct 循环 + `MaxIterations` 防失控 + `OnStep`/`OnDelta` 流式回调 |
-| `internal/agent/tools_plan.go` | 业务工具 | `search_place`（直通 `amap.Client.SearchPlaces`）、`plan_route`（直通 `planner.Compute`） |
-| `cmd/agent-demo/main.go` | 装配层 | 独立入口，与 7800 服务互不依赖 |
+| `internal/agent/loop.go` | 循环 | `Run()` / `Resume()` 共用 `runLoop`：ReAct 循环 + `MaxIterations` 防失控 + 流式回调；捕获确认请求以 `*ConfirmNeeded` 暂停返回 |
+| `internal/agent/hitl.go` | HITL 协议 | `ConfirmError` / `Confirmable` / `Pending` / `ConfirmNeeded`：暂停-恢复的契约 |
+| `internal/agent/tools_confirm.go` | 确认工具 | `confirm_place`（候选 0/1 直通，≥2 出卡片）、`confirm_mode`（总是出卡片），实现 `Confirmable.RunConfirmed` |
+| `internal/agent/tools_plan.go` | 业务工具 | `search_place`（地名搜索）、`plan_route`（直通 `planner.Compute`） |
+| `internal/api/agent_session.go` | 会话 | 内存 Pending 会话：取即删防重放，TTL 15 分钟 |
+| `internal/api/agent_handler.go` | 接口 | `POST /agent`（NDJSON 流式：step / delta / think / confirm / error / done）+ `POST /agent/resume`（重复/过期 410） |
 
-### 调用时序
+### 调用时序（含 HITL）
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant M as main.go<br/>cmd/agent-demo
-    participant L as Agent.Run<br/>internal/agent/loop.go
-    participant MD as Model.Complete<br/>model.go
-    participant T as Tool.Run<br/>tools_plan.go
-    participant B as 业务包<br/>amap / planner
+    participant U as 用户
+    participant A as 前端 AgentPane
+    participant H as POST /agent<br/>agent_handler.go
+    participant L as Agent.Run / Resume<br/>loop.go
+    participant T as Tool.Run<br/>tools_confirm.go
+    participant S as 内存会话<br/>agent_session.go
 
-    M->>L: Run(ctx, question)
-    loop 每一轮（上限 MaxIterations，默认 10）
-        L->>MD: Complete(ctx, msgs, specs)
-        MD-->>L: Completion{Text} 或 {Calls}
-        alt 有 tool_calls
-            L->>T: execTool → Run(json.RawMessage)
-            T->>B: SearchPlaces / ParseMode + Compute
-            B-->>T: []model.Place / planner.Result
-            T-->>L: JSON 文本（错误也以文本返回）
-            L->>L: NewToolMsg 回填历史，进入下一轮
-        else 纯文本 = 最终答案（出口）
-            L-->>M: answer, []Step, nil
+    U->>A: "从天安门到天坛，怎么走"
+    A->>H: POST /agent（NDJSON 流）
+    H->>L: Run(ctx, history)
+    loop ReAct 循环（上限 MaxIterations）
+        L->>L: 模型 Complete → 工具调用
+        alt confirm_place 候选 ≥ 2（或 confirm_mode）
+            T-->>L: ConfirmError（Prompt + Options）
+            L->>S: Pending（history + 待确认调用）存会话
+            L-->>H: ConfirmNeeded → 暂停
+            H-->>A: event: confirm（session_id + 卡片数据）
+            U->>A: 点选候选 / 方式
+            A->>H: POST /agent/resume（session_id + answer）
+            H->>S: 取 Pending（取即删，防重放）
+            H->>L: Resume(ctx, pending, answer)
+            L->>T: RunConfirmed(answer) → 真实工具结果
+            L->>L: 回填历史，循环继续（可链式确认）
+        else 普通工具（search_place / plan_route）
+            T-->>L: JSON 结果 → 回填历史
         end
     end
+    H-->>A: event: done（最终答案，规划结果同步工作台）
 ```
 
 ### 设计要点
 
 - **循环不做决策**：决策完全来自模型的每轮输出，`loop.go` 只负责执行、历史管理与防失控
-- **工具层无业务逻辑**：校验、解算、降级全部复用 `planner.Compute`，与同步接口、异步 worker 走同一条解算链
-- **失败喂回而非中断**：未知工具、非法参数、上游超时转为错误文本回填历史，由模型自行纠正；超过 `MaxIterations` 轮强制终止
-- **多工具并发执行**：模型一次请求多个调用时 goroutine 并发执行，结果按下标对位回填
-- **可测试性**：循环仅依赖 `Model` / `Tool` 两个小接口，注入假实现即可覆盖循环逻辑（`-race` 下 4 个场景通过）
+- **AI 不算路线**：规划委托 `planner.Compute`（与同步接口、异步 worker 同一条解算链），
+  "最优"交给手写 TSP——确定性算法可测试、毫秒级，模型只做编排
+- **确认即暂停**：确认类工具第一次执行只生成确认请求（不出结果），
+  `RunConfirmed(answer)` 才是真正执行；恢复后可能再次触发确认，天然支持链式确认
+- **会话防重放**：Pending 取即删，重复 / 过期 resume 一律 410
+- **失败喂回而非中断**：未知工具、非法参数、上游超时转为错误文本回填历史，由模型自行纠正
+- **可测试性**：循环仅依赖 `Model` / `Tool` 两个小接口；HITL 链路（链式确认、410、
+  历史对账）有独立测试覆盖（`-race` 全绿）
 
 ### 运行
 
+LLM 配置走 `settings`（管理台 DB 优先，`.env` 兜底）：
+
 ```bash
+# .env 兜底方式
 set -a; source .env; set +a
 export LLM_BASE_URL=https://api.deepseek.com   # 任选 OpenAI 兼容服务
 export LLM_API_KEY=sk-xxx
-export LLM_MODEL=deepseek-flash                # 以服务方模型列表为准
+export LLM_MODEL=deepseek-chat                 # 以服务方模型列表为准
+go run .    # 起服务，前端聊天面板即 RouteBot
+```
+
+也可以独立跑 CLI 版（与 7800 服务互不依赖，适合调试循环本身）：
+
+```bash
 go run ./cmd/agent-demo "帮我规划一条从天安门出发,途经故宫再到天坛的驾车路线"
 ```
 
-未配置 `AMAP_KEY` 时规划工具走 haversine，agent 会在回答中说明是直线估算。
+距离来源未就绪时规划走直线估算，agent 会在回答中说明。
 
 ## 运行时：启动与请求流转
 
@@ -371,35 +419,33 @@ sequenceDiagram
     participant M as main.go<br/>func main()
     participant C as config.Load()
     participant CA as cache 包
-    participant DB as PostgreSQL
-    participant AM as amap.NewClient
-    participant MX as matrix.Service
+    participant DB as MySQL (gorm)
+    participant GEO as geo.Source<br/>valhalla / amap
     participant API as api.NewRouter
 
     M->>C: Load()
-    C-->>M: Config: Port / AMAP_KEY / RedisAddr / PG_DSN 等
+    C-->>M: Config: Port / DISTANCE_SOURCE / MYSQL_DSN / RedisAddr 等
     M->>CA: NewRedis(addr, 24h)
     alt Ping 成功
         CA-->>M: *Redis（跨重启存活）
     else 连不上（不报错不退出）
         CA-->>M: err → 降级 NewMemory(24h)
     end
-    alt PG_DSN 已配置
+    alt MYSQL_DSN 已配置
         M->>DB: repo.NewGorm + Migrate
-        Note over DB: tasks / users / app_settings 表就绪<br/>启用认证、异步任务、管理台(7801)
+        Note over DB: tasks / users / app_settings / 帖子表就绪<br/>启用认证、社区、异步任务、管理台(7801)
+        M->>DB: settings.Provider（key 查询：DB 优先，env 兜底）
     else 未配置
-        Note over M: 认证/异步/管理台不启用<br/>同步 /plan 照常
+        Note over M: 认证/社区/异步/管理台不启用<br/>同步 /plan 照常；key 纯 env 模式
     end
-    M->>AM: NewClient(key, distCache).WithKeyFn(动态取 key)
-    Note over AM: key 每次请求现查（DB > env）<br/>管理台修改不重启即生效
-    M->>MX: NewWithAmap(amapClient)
-    M->>API: NewRouter(...) + NoRoute 托管 web/
-    M->>M: router.Run(":7800")
+    M->>GEO: 按 DISTANCE_SOURCE 装配 valhalla(默认) / amap<br/>amap key 动态取（DB > env），改 key 不重启
+    M->>API: NewRouter(matrixService, src, ...) + NoRoute 托管 web/<br/>搜索源默认 Photon（可切 Nominatim）
+    M->>M: router.Run(":7800")；管理端 :7801 同进程并行
     Note over M: 阻塞在 net/http Serve() 的 Accept 循环<br/>每个连接派发独立 goroutine，进程驻留
 ```
 
-- Redis 连接失败不报错不退出，降级进程内缓存，任一外部依赖不可用服务照常运行
-- 装配出的 `matrixService` / `amapClient` 为进程级单例，所有请求共享（缓存跨请求命中的前提）
+- Redis / MySQL 连接失败都不报错不退出，各自降级或关闭对应功能，服务其余部分照常运行
+- 装配出的 `matrixService` / `geo.Source` / `settings.Provider` 为进程级单例，所有请求共享（缓存跨请求命中的前提）
 - `router.Run()` 阻塞在标准库 `net/http.Serve()` 的 Accept 循环，每个连接派发独立 goroutine
 
 ### 一次 `/plan` 请求的时序
@@ -411,7 +457,7 @@ sequenceDiagram
     participant P as router.go<br/>(s *Server) plan
     participant PC as planner.Compute
     participant MX as matrix.Service
-    participant AM as amap.Client
+    participant GEO as geo.Source<br/>(valhalla / amap)
     participant RD as Redis
     participant SV as solver
 
@@ -421,20 +467,20 @@ sequenceDiagram
     rect rgb(240, 240, 240)
         Note over PC,SV: 驾车分支
         PC->>MX: DistanceMatrix(points, mode)
-        MX->>AM: drivingMatrix(points)
+        MX->>GEO: drivingMatrix(points)
         loop 每一列 j（goroutine 并发，信号量限 4 路）
-            AM->>RD: GET dist:driving|lng,lat->lng,lat
+            GEO->>RD: GET dist:driving|lng,lat->lng,lat
             alt 缓存命中
-                RD-->>AM: km（零外部请求）
+                RD-->>GEO: km（零外部请求）
             else 未命中
-                AM->>AM: GET v3/distance（5s 超时）→ SET 缓存
+                GEO->>GEO: 来源 API（Valhalla / 高德 v3/distance，5s 超时）→ SET 缓存
             end
         end
         PC->>SV: SimulatedAnnealing(dists, 0)
         Note over SV: 最近邻粗解 → 2-opt → 模拟退火
         SV-->>PC: order []int
     end
-    alt 高德失败（任一列）
+    alt 来源失败（任一列）
         MX-->>PC: haversineMatrix, degraded=true
         Note over PC: warnings 追加全线一条警告<br/>is_degraded = len(warnings) > 0
     end
@@ -449,13 +495,16 @@ sequenceDiagram
 ├─ planner.ParseMode(s string) → (model.Mode, error)                 mode 白名单，空 = 默认 driving
 ├─ planner.Validate(points, mode, segments) error                    点数上限 / 坐标范围 / segments 长度
 │
-├─ planner.Compute(points, mode, manual, segments, m, am) → Result    internal/planner/planner.go
+├─ planner.Compute(points, mode, manual, segments, src) → Result      internal/planner/planner.go
 │   ├─ (s *Service) DistanceMatrix(points, mode)
 │   │            → (dists [][]float64, degraded bool)                internal/matrix/matrix.go
-│   │   ├─ (c *Client) drivingMatrix(points) → ([][]float64, error)  驾车：逐列并发（信号量限 4 路）
-│   │   │    ├─ (c *Client) fetchColumn(origins, dest) → ([]float64, error)
-│   │   │    └─ wrapColumnErr(col, err) error                        CUQPS 限流错误附处理提示
-│   │   ├─ (c *Client) pairwiseMatrix(points, mode)                   步行/公交逐对 + 350ms 节流
+│   │   ├─ geo.Source（main 装配：valhalla 默认 / DISTANCE_SOURCE=amap 门控）
+│   │   │    ├─ valhalla.Client.DistanceMatrix(points, mode)          自托管路网 sources→targets
+│   │   │    └─ amap.Client（高德模式）
+│   │   │       ├─ drivingMatrix(points)                              驾车：逐列并发（信号量限 4 路）
+│   │   │       │    └─ fetchColumn → v3/distance（5s 超时，Redis 缓存）
+│   │   │       ├─ pairwiseMatrix(points, mode)                       步行/公交逐对 + 350ms 节流
+│   │   │       └─ wrapColumnErr(col, err) error                      CUQPS 限流错误附处理提示
 │   │   └─ haversineMatrix(points)                                    降级：全直线矩阵
 │   ├─ solver.SimulatedAnnealing(dists, 0) → []int                    internal/solver/tsp.go
 │   │    ├─ NearestNeighbor(dists, start) → []int
@@ -487,7 +536,7 @@ flowchart TD
     D -->|"否"| E400
     D -->|"是"| F{"请求带 segments？"}
 
-    F -->|"是：混合出行"| G["逐段 amap.Distance(a, b, segments[i])"]
+    F -->|"是：混合出行"| G["逐段 src.Distance(a, b, segments[i])<br/>（geo.Source，与矩阵同一来源）"]
     G --> H{"该段成功？"}
     H -->|"否"| I["仅该段降级为 haversine<br/>追加 warning + degraded"]
     H -->|"是"| J["累加距离"]
@@ -521,15 +570,15 @@ flowchart TD
 | 故障点 | 典型原因 | 降级策略 | 日志前缀 |
 |---|---|---|---|
 | Redis 连接 | 进程未起 / 网络不通 | → 进程内 Memory 缓存（不产生用户侧警告） | `redis unavailable` |
-| 高德 API（矩阵） | 配额超限 / 超时 / `status=0` | → 整张矩阵 haversine，回传 `is_degraded=true` + 全线 warning | `[matrix] amap ... falling back` |
-| 高德 API（混合出行某段） | 单段失败 | → 仅该段 haversine，该段名进 `degraded` | `[plan] 路段 ... 失败` |
+| 距离来源（矩阵） | Valhalla 未启动 / 高德配额超限、超时 | → 整张矩阵 haversine，回传 `is_degraded=true` + 全线 warning | `[matrix] ... falling back` |
+| 距离来源（混合出行某段） | 单段失败 | → 仅该段 haversine，该段名进 `degraded` | `[plan] 路段 ... 失败` |
 | 非法 `mode` | 调用方拼错 | → 400 拒绝（参数错误不降级） | — |
 | `/route` 轨迹 | 公交无连续轨迹 | → 返回空数组，前端该段画直线 | — |
 
 降级可见性设计：`matrix.DistanceMatrix` 的第二个返回值 `degraded` 将「矩阵来自降级」这一事实
 带出包外——日志仅服务端可见，降级信息必须随 HTTP 响应回传。`is_degraded` 统一取
-`len(warnings) > 0`（单一真相源）。注意区分：未配置 `AMAP_KEY` 时走 haversine 是预期行为，
-不产生警告；配置了 key 但调用失败才是降级。
+`len(warnings) > 0`（单一真相源）。注意区分：来源本身未就绪（开源模式 Valhalla 未部署 /
+高德模式未配 key）时走 haversine 是预期行为，不产生警告；来源装配了但调用失败才是降级。
 
 缓存命中效果（广州塔 → 白云山 → 长隆，3 点驾车）：
 首次 3 次高德请求约 0.33s；二次同路线 0 次约 0.06s；重启 Go 进程后仍 0 次（Redis 跨进程存活）。
@@ -539,15 +588,15 @@ flowchart TD
 | 模式 | 落点 |
 |---|---|
 | 依赖注入 | `main.go` 装配全部依赖，其他包不自建外部资源 |
-| 适配器 | `Cache` 接口适配 Redis / Memory；高德根地址为 `Client` 实例字段（`NewClientWithBase`），测试指向本地假服务器 |
-| 策略 | 出行方式对应不同高德接口与路径 |
+| 适配器 | `Cache` 接口适配 Redis / Memory；`geo.Source` 接口适配 Valhalla / 高德，测试指向本地假服务器 |
+| 策略 | `DISTANCE_SOURCE` 选择距离实现；出行方式对应不同上游接口与路径 |
 | 模板方法 | TSP 固定管线：最近邻 → 2-opt → 模拟退火 |
-| 代理 | `/search`、`/route` 代理高德，凭据不进前端 |
+| 代理 | `/search`、`/route` 代理上游来源（Photon / Valhalla / 高德），凭据不进前端 |
 | Repository | `TaskRepo` 接口隔离存储，单测注入内存实现 |
 
 ### 高德接口路径表
 
-全部常量收口在 `internal/amap/amap.go`：
+以下常量收口在 `internal/amap/amap.go`（`DISTANCE_SOURCE=amap` 高德模式的客户端；开源模式不经过这些接口）：
 
 | 常量 | 路径 | 用途 | 备注 |
 |---|---|---|---|
@@ -567,41 +616,49 @@ flowchart TD
 route66/
 ├── main.go                 # 装配层:读配置、组装、启动
 ├── internal/
-│   ├── api/                # Gin 路由: /plan /search /route /auth /plans + 编排
-│   ├── agent/              # 手写 ReAct 智能体:loop + model(OpenAI兼容) + tools(业务工具)
+│   ├── api/                # Gin 路由: /plan /agent /search /route /auth /community + 编排
+│   ├── agent/              # 手写 ReAct 智能体:loop(Run/Resume) + model(OpenAI兼容) + tools(业务+确认)
 │   ├── auth/               # 用户系统:注册/登录/会话(cookie) + 中间件
+│   ├── community/          # 社区 Feed:帖子/点赞/评论(GORM)
 │   ├── planner/            # 业务规则收口:Validate + Compute(同步接口/worker/agent 共用)
-│   ├── matrix/             # 距离矩阵(高德→haversine 降级并上报)
+│   ├── matrix/             # 距离矩阵(geo.Source → haversine 降级并上报)
 │   ├── solver/             # 手写 TSP:最近邻→2-opt→模拟退火
-│   ├── amap/               # 高德 Web 服务客户端
+│   ├── geo/                # 距离/搜索统一接口:Kind/HasAPIKey + 双模式契约
+│   ├── valhalla/           # 开源模式:自托管 Valhalla 客户端(默认)
+│   ├── amap/               # 高德模式:Web 服务客户端(DISTANCE_SOURCE=amap 门控)
+│   ├── photon/             # 搜索来源:Photon 客户端(默认)
+│   ├── nominatim/          # 搜索来源:Nominatim 客户端(可选)
 │   ├── cache/              # 缓存抽象:内存 / Redis
 │   ├── queue/              # Redis Stream 任务队列(消费组 + ACK)
 │   ├── worker/             # 异步规划后台消费者
-│   ├── repo/               # PostgreSQL 持久化(GORM):tasks/users
-│   ├── settings/           # 配置中心:高德 key 存 DB,管理台热更换
+│   ├── repo/               # MySQL 持久化(GORM):tasks/users
+│   ├── settings/           # 配置中心:高德/LLM key 存 DB,管理台热更换
 │   ├── config/             # 环境变量配置
 │   └── model/              # Point / Place / Mode
 ├── cmd/
 │   └── agent-demo/         # agent 演示入口(独立 main)
-├── frontend/               # 前端源码(React 19 + Vite)
+├── frontend/               # Web 前端源码(React 19 + Vite)
 │   ├── src/
 │   │   ├── App.jsx             # 组合根
-│   │   ├── api.js              # 后端接口唯一出口(fetch 封装 + 错误归一化)
+│   │   ├── api.js              # 后端接口唯一出口(fetch 封装 + 错误归一化 + Agent NDJSON 解析)
+│   │   ├── gcj02.js            # WGS-84 ↔ GCJ-02 坐标转换(高德模式渲染用)
+│   │   ├── mapMode.js          # 地图模式单例(/config/public 下发,App 启动写入)
 │   │   ├── theme.js            # 设计变量的 JS 侧(地图折线使用)
-│   │   ├── components/         # 组件
-│   │   ├── hooks/              # usePoints / useAmap / usePlan / useAuth ...
+│   │   ├── components/         # 组件(AgentPane 含 HITL 确认卡)
+│   │   ├── hooks/              # usePoints / useLeaflet / usePlan / useAuth / useAgent ...
 │   │   └── styles/             # tokens.css + app.css
 │   ├── vite.config.js          # base:'/' + outDir:'../web' + dev 代理到 7800
 │   └── package.json
 ├── admin/                  # 管理台(原生 HTML 单页)
 ├── app/                    # RN 跨端 App(iOS/macOS/Android/Windows,见 docs/rn-app.md)
+├── desktop/                # Electron 桌面壳(包装 web 版,main.js 一屏加载 7800)
 ├── web/                    # 前端构建产物(gitignore)
-├── docs/superpowers/       # 设计文档产物(gitignore)
+├── docs/                   # rn-app.md(四端构建)、route66.drawio(Agent 流程图)
 └── scripts/smoke.sh        # 真实 key 冒烟测试
 ```
 
-前端地图默认视野为北京（`frontend/src/theme.js` 的 `DEFAULT_CENTER = [116.397, 39.909]`，
-高德坐标为经度在前），可接 `navigator.geolocation` 以真实定位覆盖。
+前端地图默认视野为北京（`frontend/src/theme.js` 的 `DEFAULT_CENTER = [116.397, 39.909]`），
+坐标全链路 WGS-84，高德模式下仅渲染层经 `gcj02.js` 投影。
 
 ## 排查
 
