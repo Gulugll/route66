@@ -86,7 +86,7 @@ func main() {
 		authSvc = auth.NewService(authStore)
 		oidcSvc, err = auth.NewOIDCService(ctx, gormRepo.DB(), authStore, auth.OIDCConfig{
 			Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret,
-			RedirectURL: cfg.OIDCRedirectURL, AdminSub: cfg.OIDCAdminSub, AllowedSubs: cfg.OIDCAllowedSubs,
+			RedirectURL: cfg.OIDCRedirectURL, AdminSub: cfg.OIDCAdminSub, AllowedSubs: cfg.OIDCAllowedSubs, AllowAll: cfg.OIDCAllowAll,
 		})
 		if err != nil {
 			log.Fatalf("OIDC 初始化失败: %v", err)

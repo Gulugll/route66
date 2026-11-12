@@ -24,6 +24,7 @@ type Config struct {
 	OIDCRedirectURL  string
 	OIDCAdminSub     string   // 管理员 sub（自动入白名单 + admin 角色）
 	OIDCAllowedSubs  []string // 额外允许登录的 sub 白名单
+	OIDCAllowAll     bool     // OIDC_ALLOW_ALL=true：开放注册用户使用
 	AdminUser        string   // 管理员种子账号(P2 认证启用时,启动时确保存在)
 	AdminPass        string
 
@@ -55,6 +56,7 @@ func Load() Config {
 		OIDCRedirectURL:  os.Getenv("OIDC_REDIRECT_URL"),
 		OIDCAdminSub:     os.Getenv("OIDC_ADMIN_SUB"),
 		OIDCAllowedSubs:  splitList(os.Getenv("OIDC_ALLOWED_SUBS")),
+		OIDCAllowAll:     os.Getenv("OIDC_ALLOW_ALL") == "true",
 		AdminUser:        os.Getenv("ADMIN_USER"),
 		AdminPass:        os.Getenv("ADMIN_PASSWORD"),
 

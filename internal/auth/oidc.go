@@ -29,6 +29,7 @@ type OIDCConfig struct {
 	RedirectURL  string
 	AdminSub     string   // 管理员 sub：自动入白名单 + 建档即 admin 角色
 	AllowedSubs  []string // 额外允许登录的 sub 白名单；空 = 只有管理员
+	AllowAll    bool     // true = 任何注册用户可登录（朋友开放模式）
 }
 
 // OIDCState 一次性登录 state（10 分钟过期，消费即删）。
@@ -222,6 +223,9 @@ func (s *OIDCService) verifyIDToken(ctx context.Context, rawIDToken string) (*oi
 }
 
 func (s *OIDCService) isAllowed(sub string) bool {
+	if s.cfg.AllowAll {
+		return true
+	}
 	_, ok := s.allowed[sub]
 	return ok
 }
