@@ -20,10 +20,15 @@ Route66 是一个多点路径规划服务：输入一串地点，自动计算总
 **高德模式**（高德 Web 服务 + 高德瓦片，个人使用），`.env` 一个开关切换；
 来源不可用时自动降级为直线估算并在响应中显式标注。
 
-后端为 Go 单进程（Gin + MySQL + Redis），Web 前端为 React 19 + Vite，由 Go 进程同源托管。
+后端为 Go 单进程（Gin + **SQLite** + Redis），Web 前端为 React 19 + Vite，由 Go 进程同源托管。
 同一套后端服务多类客户端：Web 浏览器、React Native 跨端 App（`app/`）、Electron 桌面壳（`desktop/`）。
-内置手写 ReAct 智能体（RouteBot）：LLM 自主组合「地点搜索」「路线规划」等工具完成规划，
+内置 ReAct 智能体（RouteBot）：LLM 自主组合「地点搜索」「路线规划」等工具完成规划，
 在歧义地点与出行方式两处暂停并弹卡片等用户确认（HITL，人工副驾），确认后从断点恢复继续规划。
+
+> **2026-11 大版本**：存储从 MySQL 切换为纯 Go SQLite（零外部数据库依赖）；
+> 密码登录移除，认证改为 **Casdoor SSO / 本地免登录双模式**；
+> 新增 **MCP 优先模式**——用户绑定自己的地图 MCP 服务，key 不出浏览器，服务器零 key 运行。
+> 详见下方「部署模式与 MCP（新版）」。
 
 ## 功能特性
 
@@ -35,12 +40,66 @@ Route66 是一个多点路径规划服务：输入一串地点，自动计算总
 | 双地图模式 | 开源（Valhalla + OSM）/ 高德（Web 服务 + 瓦片）一个开关切换，前端底图与坐标投影自动跟随 |
 | 智能 Agent + HITL | 手写 ReAct 循环：歧义地点、出行方式暂停弹卡等确认，确认后从断点恢复继续规划 |
 | 社区 Feed | 路线笔记发布、点赞评论、路线快照分享与一键导入 |
-| 认证与管理台 | MySQL：用户系统、API 级登录墙、高德 / LLM key 管理台热更换 |
+| 认证双模式 | 联合部署走 Casdoor OIDC（PKCE + 白名单 + 换账号）；独立部署本地免登录。密码体系已移除 |
+| **MCP 优先** | 用户绑定自己的地图 MCP（高德/腾讯），key 只存浏览器；绑定后搜索/矩阵/轨迹全走用户设备 |
 | 异步任务 | Redis Stream 消费组 + 后台 worker，长任务提交后轮询 |
 | 拖拽排序 | 原生 HTML5 DnD，零第三方依赖 |
 | 双重缓存 | Redis 优先，不可用降级进程内 map，TTL 24h |
 | 优雅降级 | 来源失败回退直线估算，降级信息随响应回传（`is_degraded`） |
 | 多端交付 | Web（React 19）/ 跨端 App（React Native）/ 桌面（Electron 壳）共用同一后端 |
+
+## 部署模式与 MCP（2026-11 新版）
+
+### 存储：SQLite 统一承载
+
+`SQLITE_PATH`（默认 `data/route66.db`）一个文件承载用户、会话、社区帖子、任务与配置。
+纯 Go 驱动（glebarez/sqlite），WAL + busy_timeout + 单写连接；**不再需要 MySQL/PostgreSQL**。
+备份 = 复制这一个文件；迁移服务器 = 拷贝 `data/` 目录。
+
+### 认证双模式
+
+| 模式 | 开关 | 行为 |
+|---|---|---|
+| **独立部署**（默认） | `NO_AUTH=true`（默认） | 无登录，所有请求以「本地用户」（admin）身份放行，适合本机/内网 |
+| **联合部署** | `NO_AUTH=false` + 下表 OIDC 配置 | 全部业务 API 有登录墙；Casdoor 认证，白名单准入 |
+
+联合部署环境变量：
+
+| 变量 | 说明 |
+|---|---|
+| `OIDC_ISSUER` | Casdoor/OIDC issuer，如 `https://sso.example.com` |
+| `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | OIDC 应用凭据 |
+| `OIDC_REDIRECT_URL` | 完整回调地址，如 `https://route66.example.com/auth/callback` |
+| `OIDC_ADMIN_SUB` | 管理员 sub：自动入白名单，建档即 admin 角色 |
+| `OIDC_ALLOWED_SUBS` | 可选，逗号分隔的额外允许登录 sub |
+
+实现要点：Authorization Code + PKCE S256 + 一次性 state（10 分钟过期，双提交 cookie 比对）；
+id_token 验签失败自动重建 provider 刷新 JWKS 重试一次；
+退出登录跳 `/auth/login?prompt=login` —— SSO 会话有效也强制显示登录表单，可换账号。
+
+### MCP 优先模式（用户自绑地图服务，服务器零 key）
+
+在 RouteBot 面板绑定自己的地图 MCP（高德 `mcp.amap.com` / 腾讯 `mcp.map.qq.com`，
+厂商控制台免费申请 key）。**key 只存浏览器 localStorage，永不上传服务器。**
+
+绑定后的主规划链路：
+
+```
+用户设备直连厂商取距离矩阵（MCP tools）
+  → POST /plan/solve（后端纯计算 TSP 解序，无 key 无外部依赖）
+  → 用户设备直连厂商取逐段轨迹画线
+```
+
+RouteBot 智能体路径同理（search/matrix/legs 三阶段委托执行，HITL 不变）。
+未绑定用户走 `/plan` 服务器端来源（Valhalla 或环境变量里的高德 key）作为降级。
+
+### 一键部署
+
+```bash
+./scripts/deploy.sh   # 前端构建 → 交叉编译 Linux 二进制 → 上传 → systemctl 重启
+```
+
+---
 
 ## 架构
 
@@ -147,9 +206,12 @@ open http://localhost:7800
 > Valhalla 容器首次启动会自动建瓦片（视机器 20~60 分钟），期间 `/plan` 会返回
 > 直线估算并在 `is_degraded` 显式标注；瓦片就绪后自动恢复真实路网，无需重启。
 
-### 2.5 登录系统 + 管理台（MySQL，可选）
+### 2.5 登录系统 + 管理台
 
-`docker compose up -d mysql` 拉起 MySQL（用户、社区帖子、key 配置都存这里）。配置数据库后启用认证、社区与管理能力；不配置则全部不启用，同步规划不受影响。
+> ⚠️ 本节描述的 MySQL 登录体系已于 2026-11 移除，现为 Casdoor SSO / 本地免登录双模式，
+> 见上方「部署模式与 MCP（新版）」。管理台（`:7801`）保留：SSO 模式下 admin 角色可进。
+
+`docker compose up -d mysql` 等 MySQL 相关内容仅作历史参考，当前版本不需要。
 
 | 端口 | 内容 |
 |---|---|
