@@ -57,3 +57,10 @@ docs/superpowers/
 
 # 运行时产物:上传的头像/帖子图片(用户数据,不进仓库)
 .run/
+
+# 构建产物与临时文件
+route66-linux-amd64*
+*.go-tmp-umask
+*.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]
+.DS_Store
+.playwright-cli/
