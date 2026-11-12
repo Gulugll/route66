@@ -130,21 +130,12 @@ export function fetchPublicConfig() {
   return request('/config/public')
 }
 
-/** 注册新用户。后端注册成功会顺带登录（发会话 cookie）。 */
-export function registerUser(username, password) {
-  return request('/auth/register', {
+/** MCP 主链路：后端纯计算解序（矩阵由用户设备直连厂商取回）。 */
+export function solveMatrix({ points, mode, matrix }) {
+  return request('/plan/solve', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
-  })
-}
-
-/** 登录。凭据错抛 401 的中文错误。 */
-export function loginUser(username, password) {
-  return request('/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ points, mode, matrix }),
   })
 }
 

@@ -134,6 +134,8 @@ func NewRouter(m *matrix.Service, src geo.Source, r repo.TaskRepo, q *queue.Queu
 	// 降级语义的开关收在这一个函数里,别处不出现第二个 if。
 	p := s.protected(router)
 	p.POST("/plan", s.plan)
+	// MCP 主链路：前端取回矩阵，后端纯计算解序（无 key、无外部依赖）
+	p.POST("/plan/solve", s.solveMatrix)
 	p.POST("/agent", s.agentChat)
 	// HITL 恢复入口:用户在确认卡片上答复后续跑循环
 	p.POST("/agent/resume", s.agentResume)

@@ -14,7 +14,9 @@
 //                    (结果已在后端算好,跳过提交,只补画逐段轨迹)
 
 import { useCallback, useRef, useState } from 'react'
-import { fetchRoute, planRoute } from '../api.js'
+import { fetchRoute, planRoute, solveMatrix } from '../api.js'
+import { getBinding } from '../mcp/settings.js'
+import { executeTask } from '../mcp/providers.js'
 
 export const PHASE = {
   IDLE: 'idle',
@@ -112,8 +114,22 @@ export function usePlan() {
       setPhase(PHASE.SUBMITTING)
 
       let data
+      let mcpLegs = null
       try {
-        data = await planRoute({ points, manual, mode })
+        if (getBinding() && !manual) {
+          // MCP 主链路：用户设备直连厂商取矩阵 → 后端纯计算解序 → 厂商逐段轨迹。
+          // key 不出浏览器；/plan（服务器 key 模式）退居未绑定时的降级路径。
+          const mr = JSON.parse(await executeTask({ phase: 'matrix', params: { points, mode } }))
+          data = await solveMatrix({ points, mode, matrix: mr.matrix })
+          const ordered = data.order_idx.map((i) => points[i]).filter(Boolean)
+          const lr = JSON.parse(await executeTask({
+            phase: 'legs',
+            params: { points: ordered, mode, order_idx: data.order_idx },
+          }))
+          mcpLegs = lr.legs || null
+        } else {
+          data = await planRoute({ points, manual, mode })
+        }
       } catch (err) {
         if (isStale()) return
         setError(err.message)
@@ -135,7 +151,7 @@ export function usePlan() {
         ? ordered.map((p) => p.legMode || 'driving')
         : ordered.map(() => mode)
 
-      await drawLegs(ordered, modes, isStale)
+      await drawLegs(ordered, modes, isStale, mcpLegs)
     },
     [drawLegs]
   )

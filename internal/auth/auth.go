@@ -26,7 +26,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
@@ -266,86 +265,6 @@ func NewService(store Store, opts ...Option) *Service {
 	return s
 }
 
-// Register 注册新用户。用户名 3~32 个字符(中英文都可),密码至少 6 位。
-// 返回创建好的用户(不含密码哈希以外的敏感信息)。
-func (s *Service) Register(ctx context.Context, username, password string) (User, error) {
-	u, err := s.register(ctx, username, password, RoleUser)
-	return u, err
-}
-
-func (s *Service) register(ctx context.Context, username, password, role string) (User, error) {
-	username = strings.TrimSpace(username)
-	if n := utf8.RuneCountInString(username); n < 3 || n > 32 {
-		return User{}, fmt.Errorf("用户名长度需在 3~32 个字符之间")
-	}
-	if len(password) < 6 {
-		return User{}, fmt.Errorf("密码至少 6 位")
-	}
-	// bcrypt 成本 10:单次哈希约 50~100ms —— 故意的。
-	// 密码哈希就该慢,登录一秒钟几次无所谓,攻击者离线爆破时每次都要付这个成本。
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), 10)
-	if err != nil {
-		return User{}, fmt.Errorf("hash password: %w", err)
-	}
-	u := &User{Username: username, PasswordHash: string(hash), Role: role}
-	if err := s.store.CreateUser(ctx, u); err != nil {
-		if errors.Is(err, ErrUsernameTaken) {
-			return User{}, err // 原样上抛,handler 翻译成 409
-		}
-		// 存储故障:包上统一标记,原文只在服务端日志可见
-		return User{}, fmt.Errorf("%w: %v", ErrStorageUnavailable, err)
-	}
-	return *u, nil
-}
-
-// Login 校验用户名密码,成功则创建会话并返回 token(将写入 HttpOnly cookie)。
-// ip 是调用方(c.ClientIP())传来的来源地址,限速按它记账。
-// 用户名不存在和密码错误返回**同一个**错误文案 —— 见包注释的安全红线。
-func (s *Service) Login(ctx context.Context, ip, username, password string) (User, string, error) {
-	if s.limiter != nil {
-		if err := s.limiter.Check(ctx, ip); err != nil {
-			// ErrLoginThrottled 原样上抛,handler 翻译成 429。
-			// 被拒的尝试不再往下走:bcrypt 不算、库不查 —— 限速同时省了它们。
-			return User{}, "", err
-		}
-	}
-	u, err := s.store.GetUserByName(ctx, strings.TrimSpace(username))
-	if errors.Is(err, ErrNotFound) {
-		s.recordLoginFailure(ctx, ip)
-		return User{}, "", ErrBadCredentials
-	}
-	if err != nil {
-		// 存储故障不是用户的错,不计入限速
-		return User{}, "", fmt.Errorf("%w: %v", ErrStorageUnavailable, err)
-	}
-	// bcrypt 校验:即使攻击者拿到库,也只有 hash;
-	// CompareHashAndPassword 内部是常数时间比较,不泄露"前几位对没对"
-	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)) != nil {
-		s.recordLoginFailure(ctx, ip)
-		return User{}, "", ErrBadCredentials
-	}
-	token, err := newToken()
-	if err != nil {
-		return User{}, "", fmt.Errorf("%w: %v", ErrStorageUnavailable, err)
-	}
-	sess := &Session{Token: token, UserID: u.ID, ExpiresAt: time.Now().Add(SessionTTL)}
-	if err := s.store.CreateSession(ctx, sess); err != nil {
-		return User{}, "", fmt.Errorf("%w: %v", ErrStorageUnavailable, err)
-	}
-	if s.limiter != nil {
-		s.limiter.Reset(ctx, ip) // 登录成功,该 IP 的失败计数清零
-	}
-	return u, token, nil
-}
-
-// recordLoginFailure 记失败但 limiter 缺席时是 no-op ——
-// 降级形态下登录功能完整,只是不记账。
-func (s *Service) recordLoginFailure(ctx context.Context, ip string) {
-	if s.limiter != nil {
-		s.limiter.RecordFailure(ctx, ip)
-	}
-}
-
 // ErrBadCredentials 登录失败的统一错误。文案故意模糊 —— 防枚举。
 var ErrBadCredentials = errors.New("用户名或密码错误")
 
@@ -440,24 +359,6 @@ func (s *Service) RunSessionCleanup(ctx context.Context, every time.Duration) {
 		case <-ticker.C:
 		}
 	}
-}
-
-// EnsureSeedAdmin 确保种子管理员存在:已存在(同名)则跳过,不存在则创建。
-// 解决"第一个 admin 哪来"的鸡生蛋问题 —— 靠 env 的 ADMIN_USER/ADMIN_PASSWORD。
-// 账号已存在时**不更新密码**:环境变量变更不应重置线上账号。
-func (s *Service) EnsureSeedAdmin(ctx context.Context, username, password string) error {
-	_, err := s.store.GetUserByName(ctx, username)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, ErrNotFound) {
-		return err
-	}
-	_, err = s.register(ctx, username, password, RoleAdmin)
-	if errors.Is(err, ErrUsernameTaken) {
-		return nil // 并发/重复启动时的兜底,同样视为"已存在"
-	}
-	return err
 }
 
 // ListUsers 全量用户列表(管理端用)。当前规模不分页,理由见 admin.go。
