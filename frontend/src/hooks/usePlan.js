@@ -52,7 +52,9 @@ export function usePlan() {
   // 逐段取真实路网轨迹:拿不到(公交没轨迹/网络失败)就降级画直线,
   // 和后端"高德失败降级 haversine"是同一个思想:局部失败不让整体不可用。
   // modes[i] = 第 i 段的出行方式。
-  const drawLegs = useCallback(async (ordered, modes, isStale) => {
+  // legs(RouteBot MCP 模式)可携带厂商返回的轨迹,优先采用 —— 拿不到的段
+  // (如高德 MCP 不给几何)回退自托管 /route,仍是真实路网。
+  const drawLegs = useCallback(async (ordered, modes, isStale, legs = null) => {
     const legCount = Math.max(ordered.length - 1, 0)
     setProgress({ done: 0, total: legCount })
     setPhase(PHASE.DRAWING)
@@ -63,11 +65,13 @@ export function usePlan() {
       const b = ordered[i + 1]
       if (!a || !b) continue
 
-      let path = []
-      try {
-        path = await fetchRoute(a, b, modes[i])
-      } catch {
-        // 局部失败不该让整个功能不可用
+      let path = legs?.[i]?.polyline || []
+      if (path.length < 2) {
+        try {
+          path = await fetchRoute(a, b, modes[i])
+        } catch {
+          // 局部失败不该让整个功能不可用
+        }
       }
       if (isStale()) return false
 
@@ -149,7 +153,7 @@ export function usePlan() {
       setError('')
       setResult(result)
       setSegments([])
-      await drawLegs(ordered, ordered.map(() => mode), isStale)
+      await drawLegs(ordered, ordered.map(() => mode), isStale, result.legs || null)
     },
     [drawLegs]
   )

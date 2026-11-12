@@ -45,10 +45,15 @@ func tokenFromCookie(c *gin.Context) string {
 	return strings.TrimSpace(cookie)
 }
 
-// OptionalAuth 尽力认人。任何失败(没 cookie / 过期 / 用户被删)都静默放行 ——
-// 它的职责是"有机会就把用户挂到上下文",不是拦截。
+// OptionalAuth 尽力认人。任何失败(没 cookie / 过期 / 用户被删)都静默放行。
+// localMode 下直接注入本地用户。
 func (s *Service) OptionalAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if s.localMode {
+			c.Set(cUserKey, s.localUser)
+			c.Next()
+			return
+		}
 		if u, err := s.UserFromToken(c.Request.Context(), tokenFromCookie(c)); err == nil {
 			c.Set(cUserKey, u)
 		}
@@ -56,10 +61,14 @@ func (s *Service) OptionalAuth() gin.HandlerFunc {
 	}
 }
 
-// RequireAuth 强制登录。401(未认证)而不是 403(已认证但权限不够)——
-// 这两个状态码的语义区别要让前端能区分"该去登录"和"该去找管理员"。
+// RequireAuth 强制登录。localMode 下本地用户直接通过。
 func (s *Service) RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if s.localMode {
+			c.Set(cUserKey, s.localUser)
+			c.Next()
+			return
+		}
 		if _, ok := currentUser(c); !ok {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
 			return
@@ -68,10 +77,14 @@ func (s *Service) RequireAuth() gin.HandlerFunc {
 	}
 }
 
-// RequireAdmin 强制 admin 角色。注意它依赖 OptionalAuth 先跑
-// (gin 的中间件链按注册顺序执行),单独挂它等于没挂。
+// RequireAdmin 强制 admin 角色。localMode 下本地用户（admin）直接通过。
 func (s *Service) RequireAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if s.localMode {
+			c.Set(cUserKey, s.localUser)
+			c.Next()
+			return
+		}
 		u, ok := currentUser(c)
 		if !ok {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
@@ -86,12 +99,15 @@ func (s *Service) RequireAdmin() gin.HandlerFunc {
 	}
 }
 
+// CookieSecure 联合部署（HTTPS）时由装配层置 true。
+// 本地 http 开发保持 false，否则浏览器拒发 cookie。
+var CookieSecure = false
+
 // SetSessionCookie 把会话写进 HttpOnly cookie。
 //
 // HttpOnly:JS 读不到 —— XSS 就算偷走了页面上的东西也偷不走会话;
 // SameSite=Lax:跨站 GET 导航会带上,跨站 POST 不会 —— CSRF 的基础防线;
-// 故意不设 Secure:本地开发是 http://localhost,设了 Secure 浏览器会拒发。
-// 上 HTTPS 时必须补上,TODO 注释就是给那一刻的。
+// Secure 由 CookieSecure 控制（HTTPS 部署时必须为 true）。
 func SetSessionCookie(c *gin.Context, token string, maxAge int) {
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     CookieName,
@@ -99,8 +115,8 @@ func SetSessionCookie(c *gin.Context, token string, maxAge int) {
 		Path:     "/", // 全站有效:用户端和管理端两个"目录"都要带上
 		MaxAge:   maxAge,
 		HttpOnly: true,
+		Secure:   CookieSecure,
 		SameSite: http.SameSiteLaxMode,
-		// Secure: true, // 上 HTTPS 后打开
 	})
 }
 

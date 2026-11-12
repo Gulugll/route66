@@ -36,7 +36,8 @@ type Server struct {
 	src      geo.Source         // 距离/轨迹来源(valhalla 或 amap),用 HasAPIKey 判断可用性
 	repo     repo.TaskRepo      // 可空:nil = 异步 /plans 不可用
 	queue    *queue.Queue       // 可空:同上
-	auth     *auth.Service      // 可空:nil = 不注册 /auth/*
+	auth     *auth.Service      // 双模式认证：NoAuth 本地用户 / SSO 会话
+	oidc     *auth.OIDCService  // 可空：仅联合部署（NO_AUTH=false）时装配
 	settings *settings.Provider // 可空:nil = 不注册 /config/public
 	// envFallbacks 配置名 → env 兜底值。管理端回显"来源"时用:
 	// handler 不直接读环境变量(集中到 config.Load 是既有约定)
@@ -68,6 +69,9 @@ type Option func(*Server)
 
 // WithAuth 挂认证服务:注册 /auth/* 路由 + 全局 OptionalAuth。
 func WithAuth(a *auth.Service) Option { return func(s *Server) { s.auth = a } }
+
+// WithOIDC 挂联合登录服务：注册 GET /auth/login 与 /auth/callback。
+func WithOIDC(o *auth.OIDCService) Option { return func(s *Server) { s.oidc = o } }
 
 // WithRegisterLimiter 挂注册限流器。与登录限流同一个类型、不同参数——
 // 注册是"创建账号"的入口,滥用代价更高(灌垃圾账号),窗口更严(次/时)。
@@ -133,6 +137,8 @@ func NewRouter(m *matrix.Service, src geo.Source, r repo.TaskRepo, q *queue.Queu
 	p.POST("/agent", s.agentChat)
 	// HITL 恢复入口:用户在确认卡片上答复后续跑循环
 	p.POST("/agent/resume", s.agentResume)
+	// 前端委托执行回填:用户绑定的地图 MCP 在用户设备直连执行后回填结果
+	p.POST("/agent/tool_result", s.agentToolResult)
 	p.GET("/search", s.search)
 	p.GET("/route", s.route)
 	// 异步任务接口只在装配了存储 + Stream 时注册:
@@ -141,13 +147,13 @@ func NewRouter(m *matrix.Service, src geo.Source, r repo.TaskRepo, q *queue.Queu
 		p.POST("/plans", s.createPlan)
 		p.GET("/plans/:id", s.getPlan)
 	}
-	// 登录/注册/当前用户,全部公开:
-	// register/login 是登录墙本体,锁了就没人能进来;
-	// me 未登录返回 401 是正常语义(前端靠它探测登录态);
-	// logout 幂等,未登录调用无害。
+	// 认证路由：联合部署 = OIDC 跳转/回调；密码注册/登录已移除。
+	// me 未登录返回 401（前端探测登录态）；logout 幂等。
+	if s.oidc != nil {
+		router.GET("/auth/login", s.oidcLogin)
+		router.GET("/auth/callback", s.oidcCallback)
+	}
 	if s.auth != nil {
-		router.POST("/auth/register", s.register)
-		router.POST("/auth/login", s.login)
 		router.POST("/auth/logout", s.logout)
 		router.GET("/auth/me", s.me)
 		// 资料修改类必须登录:单独一组,别与上面的公开路由混放

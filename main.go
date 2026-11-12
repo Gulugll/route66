@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log"
+	"os"
+	"path/filepath"
 	"time"
 
 	"awesomeProject/internal/amap"
@@ -43,74 +45,68 @@ func main() {
 		log.Printf("redis cache enabled at %s", cfg.RedisAddr)
 	}
 
-	// —— 配置中心 + 数据库:MYSQL_DSN 是认证/异步/管理端的总开关 ——
-	// keyProvider 即使没有 DB 也要存在:它的 fallback 直接给 env 值,用户没有配置回退env值
-	// amap.Client 拿到的永远是同一个查询接口,DB 配没配对它透明
+	// —— 配置中心 + 统一存储:SQLite 常开（用户/会话/社区/任务/设置同库）——
+	// 认证双模式：NO_AUTH=true（默认）= 本地用户免登录；false = Casdoor OIDC。
 	var keyProvider *settings.Provider
 	var authSvc *auth.Service
-	var communitySvc *community.Service
-	var plansRepo repo.TaskRepo
-	var taskQueue *queue.Queue
+	var oidcSvc *auth.OIDCService
 
-	if cfg.MySQLDSN != "" { //数据库有值
-		gormRepo, err := repo.NewGorm(cfg.MySQLDSN)
-		if err == nil {
-			err = gormRepo.Migrate(ctx)
-		}
-		if err != nil {
-			log.Printf("mysql unavailable (%v), auth/async/admin disabled", err)
-		} else {
-			log.Printf("mysql connected, tasks/users/app_settings ready")
-			plansRepo = gormRepo
-
-			authStore := auth.NewGormStore(gormRepo.DB())
-			if err := authStore.Migrate(ctx); err != nil {
-				log.Printf("auth migrate failed: %v", err)
-			} else {
-				// 登录限速:Redis 可达才装配;不可达则不限速地跑(fail open)。
-				// 上线规模默认每 IP 每分钟 10 次失败。
-				authOpts := []auth.Option{}
-				if rl, err := auth.NewRedisLoginLimiter(cfg.RedisAddr, 10, time.Minute); err != nil {
-					log.Printf("login limiter unavailable (%v), login rate limiting disabled", err)
-				} else {
-					authOpts = append(authOpts, auth.WithLimiter(rl))
-					log.Printf("login rate limit enabled: 10 failures/min per IP (redis %s)", cfg.RedisAddr)
-				}
-				authSvc = auth.NewService(authStore, authOpts...)
-				// 过期会话周期清理:惰性删除覆盖不到的死会话靠这里兜底
-				go authSvc.RunSessionCleanup(ctx, time.Hour)
-
-				// 社区模块:复用同一个 gorm 连接,迁移与 auth 同一时机。
-				// 迁移失败只降级不启动失败 —— /community/* 不注册,其余功能照常
-				communityStore := community.NewGormStore(gormRepo.DB())
-				if err := communityStore.Migrate(ctx); err != nil {
-					log.Printf("community migrate failed: %v", err)
-				} else {
-					communitySvc = community.NewService(communityStore)
-				}
-				// 种子管理员:env 给了就确保存在;没给则跳过(管理端仍可注册普通用户,
-				// 但没人能进管理 API 403)
-				if cfg.AdminUser != "" && cfg.AdminPass != "" {
-					if err := authSvc.EnsureSeedAdmin(ctx, cfg.AdminUser, cfg.AdminPass); err != nil {
-						log.Printf("seed admin failed: %v", err)
-					} else {
-						log.Printf("admin account ensured: %s", cfg.AdminUser)
-					}
-				} else {
-					log.Printf("ADMIN_USER/ADMIN_PASSWORD not set, no admin account created")
-				}
-			}
-
-			settingStore := settings.NewGormSettingStore(gormRepo.DB())
-			if err := settingStore.Migrate(ctx); err != nil {
-				log.Printf("settings migrate failed: %v", err)
-			}
-			keyProvider = settings.NewProvider(settingStore, envFallback(cfg))
-		}
-	} else { //数据库连接失败，env兜底
-		keyProvider = settings.NewProvider(nil, envFallback(cfg)) // 纯 env 模式
-		log.Printf("MYSQL_DSN not set: auth/async/admin disabled (sync /plan unaffected)")
+	if err := os.MkdirAll(filepath.Dir(cfg.SQLitePath), 0o755); err != nil {
+		log.Fatalf("创建数据目录失败: %v", err)
 	}
+	gormRepo, err := repo.NewGorm(cfg.SQLitePath)
+	if err != nil {
+		log.Fatalf("sqlite 初始化失败: %v", err)
+	}
+	if err := gormRepo.Migrate(ctx); err != nil {
+		log.Fatalf("tasks 表迁移失败: %v", err)
+	}
+	plansRepo := gormRepo
+	log.Printf("sqlite ready at %s", cfg.SQLitePath)
+
+	authStore := auth.NewGormStore(gormRepo.DB())
+	if err := authStore.Migrate(ctx); err != nil {
+		log.Fatalf("users/sessions 表迁移失败: %v", err)
+	}
+	if err := auth.MigrateOIDCStates(ctx, gormRepo.DB()); err != nil {
+		log.Fatalf("oidc_states 表迁移失败: %v", err)
+	}
+
+	if cfg.NoAuth {
+		// 独立部署：本地用户（admin）自动放行，登录墙/角色门禁退化为单机语义
+		authSvc = auth.NewService(authStore)
+		localUser, err := authSvc.EnsureLocalUser(ctx)
+		if err != nil {
+			log.Fatalf("本地用户初始化失败: %v", err)
+		}
+		authSvc = auth.NewService(authStore, auth.WithLocalMode(localUser))
+		log.Printf("独立部署模式：本地用户 %s 免登录", localUser.Nickname)
+	} else {
+		auth.CookieSecure = true // HTTPS 部署：会话 cookie 加 Secure
+		authSvc = auth.NewService(authStore)
+		oidcSvc, err = auth.NewOIDCService(ctx, gormRepo.DB(), authStore, auth.OIDCConfig{
+			Issuer: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret,
+			RedirectURL: cfg.OIDCRedirectURL, AdminSub: cfg.OIDCAdminSub, AllowedSubs: cfg.OIDCAllowedSubs,
+		})
+		if err != nil {
+			log.Fatalf("OIDC 初始化失败: %v", err)
+		}
+		log.Printf("联合部署模式：OIDC issuer %s", cfg.OIDCIssuer)
+	}
+	// 过期会话周期清理（两种模式共用）
+	go authSvc.RunSessionCleanup(ctx, time.Hour)
+
+	communityStore := community.NewGormStore(gormRepo.DB())
+	if err := communityStore.Migrate(ctx); err != nil {
+		log.Fatalf("community 表迁移失败: %v", err)
+	}
+	communitySvc := community.NewService(communityStore)
+
+	settingStore := settings.NewGormSettingStore(gormRepo.DB())
+	if err := settingStore.Migrate(ctx); err != nil {
+		log.Printf("settings migrate failed: %v", err)
+	}
+	keyProvider = settings.NewProvider(settingStore, envFallback(cfg))
 
 	// —— 距离层装配:来源可选,valhalla 默认,amap 遗留门控 ——
 	// valhalla(自托管,无 key)是默认来源;DISTANCE_SOURCE=amap 切回高德
@@ -129,7 +125,8 @@ func main() {
 	}
 	matrixService := matrix.NewWithSource(src)
 
-	// —— 异步任务装配:复用同一个 PG;Redis Stream 做传送带 ——
+	// —— 异步任务装配:SQLite 存任务档案,Redis Stream 做传送带 ——
+	var taskQueue *queue.Queue
 	if plansRepo != nil {
 		taskQueue = queue.New(cfg.RedisAddr, "plan_tasks", "workers", "")
 		go func() {
@@ -156,16 +153,11 @@ func main() {
 	}
 	if authSvc != nil {
 		opts = append(opts, api.WithAuth(authSvc))
+		if oidcSvc != nil {
+			opts = append(opts, api.WithOIDC(oidcSvc))
+		}
 		if communitySvc != nil {
 			opts = append(opts, api.WithCommunity(communitySvc))
-		}
-		// 注册限流:与登录限流同一个类型、不同参数(5 次/时/IP)——
-		// 注册是"创建账号"入口,灌垃圾账号的代价比试密码高,窗口更严。
-		if rrl, err := auth.NewRedisLoginLimiter(cfg.RedisAddr, 5, time.Hour); err != nil {
-			log.Printf("register limiter unavailable (%v), register rate limiting disabled", err)
-		} else {
-			opts = append(opts, api.WithRegisterLimiter(rrl))
-			log.Printf("register rate limit enabled: 5/hour per IP (redis %s)", cfg.RedisAddr)
 		}
 	}
 	// —— 搜索来源:默认 Photon(公共实例在大陆网络可达,Nominatim 不可达) ——

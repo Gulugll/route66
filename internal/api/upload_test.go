@@ -6,6 +6,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -30,19 +32,17 @@ func newUploadTestRouter(t *testing.T) (*gin.Engine, string, int64) {
 	store := newMemAuthStore()
 	svc := auth.NewService(store)
 	r := NewRouter(matrix.New(), nil, nil, nil, WithAuth(svc))
-	_, body := doJSON(t, r, http.MethodPost, "/auth/register", `{"username":"uploader","password":"pass123"}`)
-	_ = body
-	// 注册即登录,doJSON 不透 cookie,重新登一次拿会话
-	_, loginBody := doJSON(t, r, http.MethodPost, "/auth/login", `{"username":"uploader","password":"pass123"}`)
-	_ = loginBody
-	// 从 store 拿用户与 token(直接查 store 比 JSON 解析省事且同样钉住契约)
-	var userID int64
-	for _, u := range store.users {
-		userID = u.ID
+	// 密码注册/登录已移除（SSO 改造）：直接建用户 + 会话
+	u := &auth.User{Username: "uploader", PasswordHash: "x"}
+	if err := store.CreateUser(context.Background(), u); err != nil {
+		t.Fatalf("建档失败: %v", err)
 	}
-	var token string
-	for tok := range store.sessions {
-		token = tok
+	userID := u.ID
+	token := "upload-token"
+	if err := store.CreateSession(context.Background(), &auth.Session{
+		Token: token, UserID: userID, ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("会话创建失败: %v", err)
 	}
 	return r, auth.CookieName + "=" + token, userID
 }

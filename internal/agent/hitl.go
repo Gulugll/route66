@@ -27,11 +27,13 @@ type Confirmable interface {
 	RunConfirmed(ctx context.Context, input json.RawMessage, answer string) (string, error)
 }
 
-// Pending 一次 HITL 暂停的完整状态,调用方保存后凭它恢复循环。
+// Pending 一次暂停(HITL 确认或前端委托执行)的完整状态,调用方保存后凭它恢复循环。
 type Pending struct {
-	Call    ToolCall  // 触发确认的调用
-	Prompt  string    // 卡片问题
-	Options []string  // 候选项
+	Kind    string    `json:"kind,omitempty"` // "confirm"|"exec";空串视为 confirm(兼容旧会话)
+	Call    ToolCall  // 触发确认/执行的调用
+	Prompt  string    // confirm:卡片问题
+	Options []string  // confirm:候选项
+	Task    *ExecTask // exec:前端执行任务
 	History []Message // 已含 assistant(calls),缺该轮全部 tool 结果
 	Steps   []Step    // 暂停前的过程记录,恢复后 steps 接着累加
 }

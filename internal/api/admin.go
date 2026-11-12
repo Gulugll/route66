@@ -36,7 +36,13 @@ func NewAdminRouter(a *auth.Service, sp *settings.Provider, staticDir string,
 	// 但后面的管理 API 全部依赖它认出的人来做角色判断
 	router.Use(s.auth.OptionalAuth())
 
-	router.POST("/admin/login", s.login) // 复用用户端的 login:同 cookie 名,天然共享登录态
+	// 密码登录已移除：管理端登录引导到用户端 SSO 入口（cookie 同 host 共享，登录后回来即 admin）
+	router.POST("/admin/login", func(c *gin.Context) {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":     "请通过统一登录中心（SSO）登录",
+			"login_url": "/auth/login",
+		})
+	})
 	router.POST("/admin/logout", s.logout)
 	router.GET("/admin/api/me", s.me)
 

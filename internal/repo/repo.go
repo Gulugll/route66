@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"time"
 
-	"gorm.io/driver/mysql"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -72,15 +72,11 @@ type GormTaskRepo struct {
 	db *gorm.DB
 }
 
-// NewGorm 建立 MySQL 连接并返回仓库。
-// DSN 形如 user:pass@tcp(127.0.0.1:3306)/routeplanner?charset=utf8mb4&parseTime=True&loc=Local。
-// parseTime=True 缺失时 time.Time 扫描直接报错(MySQL 驱动头号坑);charset/loc 缺省
-// 分别回退服务器字符集与 UTC,显式写死避免"本机正常、线上时区漂移"。
-// 方言标签迁徙史:enum→varchar(2026-09-17)、json→jsonb(同日)、jsonb→json(2026-09-27 切回
-// MySQL)—— 方言专属类型每次迁移都要付税,现在一律用可移植类型。
-func NewGorm(dsn string) (*GormTaskRepo, error) {
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
-		// GORM 默认日志在错误时才打,慢查询阈值保持默认
+// NewGorm 打开 SQLite（纯 Go 驱动 glebarez，无 CGO 依赖，交叉编译友好）。
+// path 形如 data/route66.db；自动附加 WAL + busy_timeout 参数。
+// WAL 提升并发读写；busy_timeout 让写锁等待而非立刻 SQLITE_BUSY。
+func NewGorm(path string) (*GormTaskRepo, error) {
+	db, err := gorm.Open(sqlite.Open(path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
 	})
 	if err != nil {
@@ -90,9 +86,10 @@ func NewGorm(dsn string) (*GormTaskRepo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get sql.DB: %w", err)
 	}
-	// 连接池参数按解算任务量给保守值:任务串行消费,更大的池只会多占 PG 连接
-	sqlDB.SetMaxOpenConns(5)
-	sqlDB.SetMaxIdleConns(2)
+	// SQLite 单写者模型：连接池限制为 1，配合 busy_timeout 串行化写入，
+	// 比多连接互相抢写锁更稳（个人部署量级下吞吐足够）。
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
 	sqlDB.SetConnMaxLifetime(time.Hour)
 	return &GormTaskRepo{db: db}, nil
 }

@@ -254,11 +254,12 @@ export function addComment(id, content) {
  * @param {{role:'user'|'assistant', content:string}[]} messages 全量对话历史
  * @param {{signal?:AbortSignal, onEvent?:(evt:object)=>void}} [options]
  */
-export async function streamAgent(messages, { signal, onEvent } = {}) {
+export async function streamAgent(messages, { signal, onEvent, mapProvider } = {}) {
   const resp = await fetch('/agent', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages }),
+    // map_provider 只传"绑了哪家",用户的 Key 永不出本设备(存 localStorage)
+    body: JSON.stringify({ messages, map_provider: mapProvider || '' }),
     signal,
   })
   return consumeAgentResponse(resp, onEvent)
@@ -275,6 +276,23 @@ export async function resumeAgent(sessionId, answer, { signal, onEvent } = {}) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session_id: sessionId, answer }),
+    signal,
+  })
+  return consumeAgentResponse(resp, onEvent)
+}
+
+/**
+ * 前端委托执行回填：用户绑定的地图 MCP 在本机直连厂商执行完毕后,
+ * 把归一化结果回填,服务端凭 session_id 恢复循环续跑。
+ * 事件流形状与 streamAgent 相同(可能再次 tool_exec —— plan_route 是两阶段任务)。
+ * @param {string} sessionId tool_exec 事件下发的会话 id
+ * @param {object|string} result 归一化的执行结果(矩阵/轨迹/地点列表)
+ */
+export async function agentToolResult(sessionId, result, { signal, onEvent } = {}) {
+  const resp = await fetch('/agent/tool_result', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, result }),
     signal,
   })
   return consumeAgentResponse(resp, onEvent)

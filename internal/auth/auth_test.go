@@ -7,8 +7,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/go-sql-driver/mysql"
 )
 
 // ── 内存 fake:单测的存储实现,和 worker_test 的 fakeRepo 同一思路 ──
@@ -34,6 +32,15 @@ func (f *fakeStore) CreateUser(_ context.Context, u *User) error {
 	u.ID = f.nextID
 	f.users[u.Username] = u
 	return nil
+}
+
+func (f *fakeStore) GetUserBySub(_ context.Context, issuer, sub string) (User, error) {
+	for _, u := range f.users {
+		if u.Issuer == issuer && u.Sub == sub {
+			return *u, nil
+		}
+	}
+	return User{}, ErrNotFound
 }
 
 func (f *fakeStore) GetUserByName(_ context.Context, username string) (User, error) {
@@ -401,8 +408,7 @@ func TestIsDuplicateKey(t *testing.T) {
 		err  error
 		want bool
 	}{
-		{"mysql 1062 duplicate entry", &mysql.MySQLError{Number: 1062}, true},
-		{"mysql 1045 access denied", &mysql.MySQLError{Number: 1045}, false},
+		{"sqlite constraint message", errors.New("constraint failed: UNIQUE constraint failed: users.username"), true},
 		{"legacy pg message string", errors.New("duplicate key value violates unique constraint"), false},
 		{"plain error", errors.New("boom"), false},
 	}

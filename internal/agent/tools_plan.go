@@ -33,6 +33,17 @@ func RouteTools(m *matrix.Service, src geo.Source, searcher placeSearcher) []Too
 	}
 }
 
+// MCPRouteTools 用户绑定地图 MCP 后的工具集:检索与规划委托前端直连厂商执行,
+// 确认类工具保留(歧义地点的候选仍走 searcher——那是免费源,无合规问题)。
+func MCPRouteTools(searcher placeSearcher) []Tool {
+	return []Tool{
+		&mcpSearchTool{},
+		&mcpPlanTool{},
+		&confirmPlaceTool{searcher: searcher},
+		&confirmModeTool{},
+	}
+}
+
 // searchPlaceTool 按关键词搜索地点,返回含坐标的候选列表。
 // agent 的典型流程是先搜索拿到 lat/lng,再交给规划工具。
 // ⚠️ 搜索走 searcher(photon/nominatim),绝不走 src(valhalla)——

@@ -18,7 +18,9 @@
 // 被调用 —— 上层把它接进规划带/地图,方案就不只是"一段话"而是"可执行的状态"。
 
 import { useCallback, useRef, useState } from 'react'
-import { resumeAgent, streamAgent } from '../api.js'
+import { agentToolResult, resumeAgent, streamAgent } from '../api.js'
+import { executeTask, PROVIDERS } from '../mcp/providers.js'
+import { getBinding } from '../mcp/settings.js'
 
 export function useAgent({ onPlan } = {}) {
   const [threads, setThreads] = useState([])
@@ -39,6 +41,8 @@ export function useAgent({ onPlan } = {}) {
     async (initiator) => {
       let answer = ''
       let confirmed = false
+      // 委托执行:流以 tool_exec 事件收尾,任务信息带出给上层循环
+      let execInfo = null
       const patchLastSteps = (fn) => {
         setThreads((prev) => {
           const next = [...prev]
@@ -65,6 +69,7 @@ export function useAgent({ onPlan } = {}) {
               },
             ])
             // ── 联动:plan_route 的结果同步进工作台 ──
+            // MCP 模式的结果是 McpPlanResult(order_idx + legs),同样带 order_idx
             calls.forEach((c, i) => {
               if (c.function?.name !== 'plan_route' || !onPlan) return
               try {
@@ -94,6 +99,19 @@ export function useAgent({ onPlan } = {}) {
                 options: evt.options || [],
               },
             ])
+          } else if (evt.type === 'tool_exec') {
+            // 委托执行:结果由本设备直连地图 MCP 产出后回填(见 send/respond 的续跑循环)
+            execInfo = {
+              sessionId: evt.session_id,
+              phase: evt.phase,
+              params: evt.params || '{}',
+              hint: evt.hint || '正在通过绑定的地图服务执行…',
+            }
+            const label = PROVIDERS[getBinding()?.provider || '']?.label || ''
+            setThreads((prev) => [
+              ...prev,
+              { kind: 'exec', hint: execInfo.hint, provider: label },
+            ])
           } else if (evt.type === 'done') {
             answer = evt.answer || ''
           } else if (evt.type === 'error') {
@@ -102,16 +120,42 @@ export function useAgent({ onPlan } = {}) {
         },
       })
 
-      if (confirmed) return 'confirmed'
+      if (execInfo) return { status: 'exec', exec: execInfo }
+      if (confirmed) return { status: 'confirmed' }
       if (answer) {
         llmHistory.current.push({ role: 'assistant', content: answer })
         setThreads((prev) => [...prev, { kind: 'bot', text: answer }])
-        return 'done'
+        return { status: 'done' }
       }
       setThreads((prev) => [...prev, { kind: 'error', text: '本轮没有得到回答，请换个问法重试' }])
-      return 'error'
+      return { status: 'error' }
     },
     [onPlan],
+  )
+
+  // runWithExecLoop 流式消费 + 委托执行的续跑循环。
+  // plan_route 在 MCP 模式是两阶段任务(matrix → legs),每轮回填可能再触发
+  // 下一轮 tool_exec —— 循环到不再挂起为止。
+  const runWithExecLoop = useCallback(
+    async (startInitiator) => {
+      let initiator = startInitiator
+      for (;;) {
+        const r = await runStream(initiator)
+        if (r.status !== 'exec') return r.status
+        let payload
+        try {
+          payload = await executeTask({
+            phase: r.exec.phase,
+            params: JSON.parse(r.exec.params || '{}'),
+          })
+        } catch (err) {
+          // 执行失败也回填:错误文本进模型历史,由它向用户解释,循环不中断
+          payload = { error: err.message }
+        }
+        initiator = (opts) => agentToolResult(r.exec.sessionId, payload, opts)
+      }
+    },
+    [runStream],
   )
 
   const send = useCallback(
@@ -127,7 +171,7 @@ export function useAgent({ onPlan } = {}) {
       llmHistory.current.push({ role: 'user', content: q })
 
       try {
-        await runStream((opts) => streamAgent(llmHistory.current, opts))
+        await runWithExecLoop((opts) => streamAgent(llmHistory.current, { ...opts, mapProvider: getBinding()?.provider || '' }))
       } catch (err) {
         const msg = err.name === 'AbortError' ? '已停止' : err.message
         if (msg.includes('未配置 LLM')) setUnavailable(true)
@@ -143,7 +187,7 @@ export function useAgent({ onPlan } = {}) {
         setThinkText('')
       }
     },
-    [runStream]
+    [runWithExecLoop]
   )
 
   // respond 用户在确认卡片上答复后续跑。答复作为 user 气泡展示 ——
@@ -166,7 +210,7 @@ export function useAgent({ onPlan } = {}) {
       ])
 
       try {
-        await runStream((opts) => resumeAgent(sessionId, answer, opts))
+        await runWithExecLoop((opts) => resumeAgent(sessionId, answer, opts))
       } catch (err) {
         const msg = err.name === 'AbortError' ? '已停止' : err.message
         setThreads((prev) => [...prev, { kind: 'error', text: msg }])
@@ -177,7 +221,7 @@ export function useAgent({ onPlan } = {}) {
         setThinkText('')
       }
     },
-    [runStream]
+    [runWithExecLoop]
   )
 
   const clear = useCallback(() => {

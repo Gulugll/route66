@@ -7,7 +7,7 @@
 // 登录/注册后不需要刷新页面:user state 变化,依赖它的组件自动重渲染。
 
 import { useCallback, useEffect, useState } from 'react'
-import { fetchMe, loginUser, logoutUser, registerUser } from '../api.js'
+import { fetchMe, logoutUser } from '../api.js'
 
 export function useAuth() {
   // ready = "已经问过 /auth/me 了"。没就绪前 TopBar 不渲染登录按钮，
@@ -34,20 +34,11 @@ export function useAuth() {
     return () => window.removeEventListener('auth:expired', onExpired)
   }, [])
 
-  const login = useCallback(async (username, password) => {
-    const data = await loginUser(username, password)
-    setUser(data.user)
-  }, [])
-
-  const register = useCallback(async (username, password) => {
-    // 后端注册成功即登录(发会话 cookie),这里直接当登录结果用
-    const data = await registerUser(username, password)
-    setUser(data.user)
-  }, [])
-
+  // 密码登录/注册已移除：身份走 DUX SSO（见 LoginPage.jsx）
   const logout = useCallback(async () => {
     await logoutUser()
-    setUser(null)
+    // prompt=login：SSO 会话有效也强制显示登录表单，退出后可换账号
+    window.location.assign('/auth/login?prompt=login')
   }, [])
 
   // 资料修改后的本地同步:后端已落库,这里只更新缓存里的用户对象。
@@ -56,5 +47,5 @@ export function useAuth() {
     setUser((u) => (u ? { ...u, ...patch } : u))
   }, [])
 
-  return { user, ready, login, register, logout, updateUser }
+  return { user, ready, logout, updateUser }
 }

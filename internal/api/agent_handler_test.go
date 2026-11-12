@@ -237,3 +237,124 @@ func TestAgentConfirmThenResume(t *testing.T) {
 		t.Fatalf("重复 resume 应 410,实际 %d", resp.Code)
 	}
 }
+
+// —— 地图 MCP 模式(前端委托执行) ——
+
+// mcpModel 脚本:第 1 轮调 plan_route(MCP 模式下委托前端) → 回填后第 2 轮出答案。
+type mcpModel struct{ calls int }
+
+func (f *mcpModel) Complete(_ context.Context, _ []agent.Message, _ []agent.ToolSpec, onDelta func(agent.Delta)) (agent.Completion, error) {
+	f.calls++
+	if f.calls == 1 {
+		call := agent.ToolCall{ID: "call-plan-1", Type: "function"}
+		call.Function.Name = "plan_route"
+		// 2 点非 manual:matrix → legs 两次委托执行
+		call.Function.Arguments = `{"points":[{"name":"A","lat":1,"lng":1},{"name":"B","lat":2,"lng":2}],"manual":false}`
+		return agent.Completion{Calls: []agent.ToolCall{call}}, nil
+	}
+	const text = "方案已生成"
+	onDelta(agent.Delta{Content: text})
+	return agent.Completion{Text: text}, nil
+}
+
+// 全链契约:map_provider=amap → tool_exec(matrix) → tool_result 回填 →
+// tool_exec(legs,链式,新 session) → tool_result 回填 → done。
+func TestAgentMcpToolExecFlow(t *testing.T) {
+	router := newAgentTestRouter(&mcpModel{}, map[string]string{
+		settings.KeyLLMAPIKey: "sk-test",
+	})
+
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+		return resp
+	}
+	var toolExec struct {
+		Type      string          `json:"type"`
+		SessionID string          `json:"session_id"`
+		Phase     string          `json:"phase"`
+		Tool      string          `json:"tool"`
+		Params    json.RawMessage `json:"params"`
+	}
+
+	resp := post("/agent", `{"map_provider":"amap","messages":[{"role":"user","content":"规划"}]}`)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("应 200,实际 %d: %s", resp.Code, resp.Body.String())
+	}
+	lines := strings.Split(strings.TrimSpace(resp.Body.String()), "\n")
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &toolExec); err != nil {
+		t.Fatalf("末行解析失败: %v (%s)", err, resp.Body.String())
+	}
+	if toolExec.Type != "tool_exec" || toolExec.SessionID == "" || toolExec.Phase != "matrix" || toolExec.Tool != "plan_route" {
+		t.Fatalf("末行应为 tool_exec(matrix): %s", resp.Body.String())
+	}
+	if !strings.Contains(string(toolExec.Params), `"mode":"driving"`) {
+		t.Errorf("执行参数应含点列表与方式: %s", toolExec.Params)
+	}
+
+	// 未知会话 → 410
+	resp = post("/agent/tool_result", `{"session_id":"deadbeef","result":"{}"}`)
+	if resp.Code != http.StatusGone {
+		t.Fatalf("未知会话应 410,实际 %d", resp.Code)
+	}
+
+	// 回填矩阵 → 链式进入 legs 阶段(新 session)
+	resp = post("/agent/tool_result",
+		`{"session_id":"`+toolExec.SessionID+`","result":{"matrix":[[0,9],[9,0]],"degraded":false,"warnings":[]}}`)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("tool_result 应 200,实际 %d: %s", resp.Code, resp.Body.String())
+	}
+	lines = strings.Split(strings.TrimSpace(resp.Body.String()), "\n")
+	var legsEvt struct {
+		Type      string `json:"type"`
+		SessionID string `json:"session_id"`
+		Phase     string `json:"phase"`
+	}
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &legsEvt); err != nil {
+		t.Fatalf("回填后末行解析失败: %v (%s)", err, resp.Body.String())
+	}
+	if legsEvt.Type != "tool_exec" || legsEvt.Phase != "legs" || legsEvt.SessionID == "" || legsEvt.SessionID == toolExec.SessionID {
+		t.Fatalf("应链式进入 legs 阶段(新 session): %s", resp.Body.String())
+	}
+
+	// 回填轨迹 → done
+	resp = post("/agent/tool_result",
+		`{"session_id":"`+legsEvt.SessionID+`","result":{"legs":[{"km":9,"duration_min":15,"polyline":[[1,1],[2,2]]}]}}`)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("tool_result 应 200,实际 %d: %s", resp.Code, resp.Body.String())
+	}
+	lines = strings.Split(strings.TrimSpace(resp.Body.String()), "\n")
+	var done struct {
+		Type   string `json:"type"`
+		Answer string `json:"answer"`
+	}
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &done); err != nil {
+		t.Fatalf("末行解析失败: %v", err)
+	}
+	if done.Type != "done" || !strings.Contains(done.Answer, "方案已生成") {
+		t.Errorf("应以 done 收尾: %s", resp.Body.String())
+	}
+
+	// Pending 一次性:同一 session 再回填 → 410
+	resp = post("/agent/tool_result", `{"session_id":"`+legsEvt.SessionID+`","result":{}}`)
+	if resp.Code != http.StatusGone {
+		t.Fatalf("重复回填应 410,实际 %d", resp.Code)
+	}
+}
+
+// map_provider 白名单:非法值 400,不兜底。
+func TestAgentChatRejectsBadProvider(t *testing.T) {
+	router := newAgentTestRouter(&mcpModel{}, map[string]string{
+		settings.KeyLLMAPIKey: "sk-test",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/agent",
+		strings.NewReader(`{"map_provider":"gaode","messages":[{"role":"user","content":"规划"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("非法 provider 应 400,实际 %d: %s", resp.Code, resp.Body.String())
+	}
+}

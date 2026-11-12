@@ -152,10 +152,10 @@ const maxColumnConcurrent = 4
 //     (j 固定,i 遍历)。不同 goroutine 碰的内存位置零交集,元素级并发写
 //     在 Go 里是安全的,连锁都不用加。
 //     两个前提,缺一不可:
-//       a) 矩阵在外面已经 make 好,goroutine 里只做下标赋值、绝不 append——
-//          append 可能触发扩容、整体搬迁底层数组,那才是真竞争;
-//       b) 缓存写入(c.store)走 cache.Cache,Memory 实现自带 sync.Mutex,
-//          不然并发写 map 会直接 fatal(不是能 recover 的 panic)。
+//     a) 矩阵在外面已经 make 好,goroutine 里只做下标赋值、绝不 append——
+//     append 可能触发扩容、整体搬迁底层数组,那才是真竞争;
+//     b) 缓存写入(c.store)走 cache.Cache,Memory 实现自带 sync.Mutex,
+//     不然并发写 map 会直接 fatal(不是能 recover 的 panic)。
 //
 //  3. 某一列失败了怎么办? → 矩阵不完整,必须整体报错,让上层 matrix
 //     降级到 haversine——绝不能返回"半张真实半张直线"的混搭矩阵。
@@ -222,7 +222,7 @@ func (c *Client) drivingMatrix(points []model.Point) ([][]float64, error) {
 				return // 这列废了,矩阵注定不完整,别再填数据
 			}
 			for k, i := range idxs {
-				dists[i][j] = col[k] // 只写第 j 列,见函数注释第 2 点
+				dists[i][j] = col[k]                                               // 只写第 j 列,见函数注释第 2 点
 				c.store(cacheKey(model.ModeDriving, points[i], points[j]), col[k]) // 写缓存,下次直接命中
 			}
 		}(j, origins, idxs)

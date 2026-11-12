@@ -50,6 +50,15 @@ func (m *memAuthStore) CreateUser(ctx context.Context, u *auth.User) error {
 	return nil
 }
 
+func (m *memAuthStore) GetUserBySub(ctx context.Context, issuer, sub string) (auth.User, error) {
+	for _, u := range m.users {
+		if u.Issuer == issuer && u.Sub == sub {
+			return u, nil
+		}
+	}
+	return auth.User{}, auth.ErrNotFound
+}
+
 func (m *memAuthStore) GetUserByName(ctx context.Context, username string) (auth.User, error) {
 	u, ok := m.users[username]
 	if !ok {
@@ -131,16 +140,20 @@ func (m *memAuthStore) SetAvatarURL(_ context.Context, userID int64, avatarURL s
 // newAuthedTestRouter 装配了认证的路由 + 一个已注册并登录的测试用户。
 // 返回值里的 cookie 直接塞进请求头就是合法登录态。
 // 业务上这相当于"一个刚注册的正常用户",能走通所有受保护接口。
+// newAuthedTestRouter 装配了认证的路由 + 一个已建档并持有会话的测试用户。
+// 密码注册/登录已移除（SSO 改造），测试直接在建库层建用户和会话。
 func newAuthedTestRouter(t *testing.T, withAmap bool, failPaths ...string) (*gin.Engine, string) {
 	t.Helper()
-	svc := auth.NewService(newMemAuthStore())
-	_, err := svc.Register(context.Background(), "testuser", "test-pass-66")
-	if err != nil {
-		t.Fatalf("注册测试用户失败: %v", err)
+	store := newMemAuthStore()
+	svc := auth.NewService(store)
+	ctx := context.Background()
+	u := &auth.User{Username: "testuser", Role: auth.RoleUser, PasswordHash: "x"}
+	if err := store.CreateUser(ctx, u); err != nil {
+		t.Fatalf("建档测试用户失败: %v", err)
 	}
-	_, token, err := svc.Login(context.Background(), "127.0.0.1", "testuser", "test-pass-66")
-	if err != nil {
-		t.Fatalf("登录测试用户失败: %v", err)
+	token := "test-token-66"
+	if err := store.CreateSession(ctx, &auth.Session{Token: token, UserID: u.ID, ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatalf("创建测试会话失败: %v", err)
 	}
 	cookie := auth.CookieName + "=" + token
 
@@ -208,61 +221,5 @@ func TestGuestModeStillWorks(t *testing.T) {
 	code, body := doJSON(t, r, http.MethodPost, "/plan", threePointsBody(""))
 	if code != http.StatusOK {
 		t.Fatalf("游客模式(未装配 auth)下 /plan 应照常 200, got %d body=%s", code, body)
-	}
-}
-
-// blockAllLimiter 永远拒绝的限速器 fake:模拟"该 IP 已被打爆"。
-type blockAllLimiter struct{}
-
-func (blockAllLimiter) Check(context.Context, string) error   { return auth.ErrLoginThrottled }
-func (blockAllLimiter) RecordFailure(context.Context, string) {}
-func (blockAllLimiter) Reset(context.Context, string)         {}
-
-// TestLoginRateLimited429 钉住 HTTP 契约:限速触发时 /auth/login 返回 429
-// (不是 401 —— 前端要能区分"密码错了"和"试试太频繁,稍后再来")。
-// 前端据此分流:401 弹登录框,429 提示稍后再试。
-func TestLoginRateLimited429(t *testing.T) {
-	svc := auth.NewService(newMemAuthStore(), auth.WithLimiter(blockAllLimiter{}))
-	r := NewRouter(matrix.New(), nil, nil, nil, WithAuth(svc))
-
-	code, resp := doJSON(t, r, http.MethodPost, "/auth/login", `{"username":"someone","password":"whatever"}`)
-	if code != http.StatusTooManyRequests {
-		t.Fatalf("被限速的登录应 429, got %d body=%s", code, resp)
-	}
-	if !strings.Contains(resp, "频繁") {
-		t.Errorf("429 响应应带可行动的中文提示, got %s", resp)
-	}
-}
-
-// TestRegisterRateLimited429 钉住注册限流的两个约定:
-// 1) 闸门在参数绑定/业务之前 —— 被拒时连用户表都不该碰(反爆破的本意);
-// 2) 429 而不是 409/400 —— 前端要能区分"用户名被占"和"稍后再来"。
-func TestRegisterRateLimited429(t *testing.T) {
-	store := newMemAuthStore()
-	svc := auth.NewService(store)
-	r := NewRouter(matrix.New(), nil, nil, nil,
-		WithAuth(svc), WithRegisterLimiter(blockAllLimiter{}))
-
-	code, resp := doJSON(t, r, http.MethodPost, "/auth/register",
-		`{"username":"ratelimited","password":"whatever123"}`)
-	if code != http.StatusTooManyRequests {
-		t.Fatalf("被限速的注册应 429, got %d body=%s", code, resp)
-	}
-	if len(store.users) != 0 {
-		t.Fatalf("限速拒绝时不应触碰用户表, 实际已有 %d 个用户", len(store.users))
-	}
-}
-
-// TestRegisterWithoutLimiterStillWorks 钉住降级语义:
-// Redis 没配(registerLimiter 为 nil)时注册照常成功 —— 限流是防御件,
-// 它缺席不能打死主流程(与登录限流 fail open 同一约定)。
-func TestRegisterWithoutLimiterStillWorks(t *testing.T) {
-	svc := auth.NewService(newMemAuthStore())
-	r := NewRouter(matrix.New(), nil, nil, nil, WithAuth(svc))
-
-	code, resp := doJSON(t, r, http.MethodPost, "/auth/register",
-		`{"username":"nolimituser","password":"whatever123"}`)
-	if code != http.StatusOK {
-		t.Fatalf("无限流器的注册应 200, got %d body=%s", code, resp)
 	}
 }

@@ -1,9 +1,11 @@
 package model
 
 // Mode 出行方式。不同的方式走高德不同的接口,距离/耗时都不同:
-//   driving → v3/distance(type=1 驾车,支持批量)
-//   walking → v5/direction/walking(逐对)
-//   transit → v3/direction/transit/integrated(逐对)
+//
+//	driving → v3/distance(type=1 驾车,支持批量)
+//	walking → v5/direction/walking(逐对)
+//	transit → v3/direction/transit/integrated(逐对)
+//
 // 注意:cycling(骑行)对个人开发者 key 返回 RESOURCE_UNAVAILABLE,暂不支持。
 type Mode string
 

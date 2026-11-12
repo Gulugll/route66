@@ -4,10 +4,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -31,17 +33,18 @@ func newCommunityTestRouter(t *testing.T) (*gin.Engine, string, string) {
 	r := NewRouter(matrix.New(), nil, nil, nil, WithAuth(svc), WithCommunity(cs))
 
 	cookie := func(name string) string {
-		doJSON(t, r, http.MethodPost, "/auth/register",
-			`{"username":"`+name+`","password":"pass123"}`)
-		// 注册即登录,但 doJSON 不透 cookie;按用户名精确定位其会话 ——
-		// map 遍历顺序随机,不能"取任意一个"(A 先注册,再来遍历就会拿到 A 的)
-		u := store.users[name]
-		for tok, s := range store.sessions {
-			if s.UserID == u.ID {
-				return auth.CookieName + "=" + tok
-			}
+		// 密码注册已移除（SSO 改造）：直接在建库层建用户 + 会话
+		u := &auth.User{Username: name, PasswordHash: "x"}
+		if err := store.CreateUser(context.Background(), u); err != nil {
+			t.Fatalf("建档 %s 失败: %v", name, err)
 		}
-		return ""
+		tok := "tok-" + name
+		if err := store.CreateSession(context.Background(), &auth.Session{
+			Token: tok, UserID: u.ID, ExpiresAt: time.Now().Add(time.Hour),
+		}); err != nil {
+			t.Fatalf("会话创建失败: %v", err)
+		}
+		return auth.CookieName + "=" + tok
 	}
 	cookieA := cookie("author_a")
 	cookieB := cookie("reader_b")

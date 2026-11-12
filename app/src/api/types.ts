@@ -38,6 +38,26 @@ export interface PlanResult {
   is_degraded: boolean;
 }
 
+/** agent MCP 模式的逐段轨迹（McpPlanResult.legs，仅 /agent 工具结果里出现） */
+export interface McpLeg {
+  from: string;
+  to: string;
+  km: number;
+  duration_min?: number;
+  /** [lng,lat] 序列；空数组 = 该段无轨迹（前端回退画直线） */
+  polyline: Array<[number, number]>;
+}
+
+/** /agent 事件：confirm（HITL 确认）与 tool_exec（前端委托执行地图 MCP）共用暂停-恢复语义 */
+export interface AgentExecEvent {
+  type: 'tool_exec';
+  session_id: string;
+  phase: string;
+  tool: string;
+  params: unknown;
+  hint?: string;
+}
+
 export interface SearchResponse {
   places: Place[];
 }

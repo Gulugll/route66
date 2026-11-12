@@ -5,20 +5,23 @@ package community
 import (
 	"context"
 	"errors"
+	"strings"
 
-	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 )
 
 // ErrNotFound 帖子不存在(或已软删 —— 软删行被查询自动过滤,语义等同不存在)。
 var ErrNotFound = errors.New("post not found")
 
-// isDuplicateKey 唯一键冲突判定,与 auth 包同名函数同一实现、同一理由:
-// errors.As 断言错误**类型**(MySQL 1062)而不是匹配报错文案。
-// 不从 auth 包 import 是刻意的:为 4 行函数拉进账号包的依赖,得不偿失。
+// isDuplicateKey 唯一键冲突判定（SQLite 版）：
+// modernc 驱动 *sqlite.Error 的 Code() 低 8 位 19 = SQLITE_CONSTRAINT，
+// 兜底匹配文案防包装层级变化。
 func isDuplicateKey(err error) bool {
-	var me *mysql.MySQLError
-	return errors.As(err, &me) && me.Number == 1062
+	var ce interface{ Code() int }
+	if errors.As(err, &ce) && ce.Code()&0xFF == 19 {
+		return true
+	}
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
 // Store 帖子存储接口。

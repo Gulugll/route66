@@ -13,6 +13,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -31,6 +32,20 @@ const agentSystemPrompt = "你是路线规划助手 RouteBot。规则:" +
 
 // WithAgentModel 注入模型实现(测试用:塞假模型就不依赖外部 LLM 服务)。
 func WithAgentModel(m agent.Model) Option { return func(s *Server) { s.agentModel = m } }
+
+// 地图 MCP 模式白名单:与厂商端点一一对应,空串 = 默认底座(Valhalla+Photon)。
+func ParseMapProvider(s string) (string, error) {
+	switch s {
+	case "", "amap", "baidu", "tencent":
+		return s, nil
+	default:
+		return "", fmt.Errorf("map_provider 无效: %q(支持空串/amap/baidu/tencent)", s)
+	}
+}
+
+// agentToolResultLimit 前端回填结果的体积上限。
+// 轨迹段最坏情况(49 段 × 上千坐标点)在 MB 级,取 2MB 余量。
+const agentToolResultLimit = 2 << 20
 
 // settingOr 按"DB(settings 表) > env 兜底"取配置,与 main.go 的
 // keyProviderValue 同一优先级;两处都没配返回空串。
@@ -51,17 +66,22 @@ type agentChatMsg struct {
 }
 
 func (s *Server) agentChat(c *gin.Context) {
-	a, err := s.buildRouteAgent(c)
-	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
-		return
-	}
-
 	var req struct {
-		Messages []agentChatMsg `json:"messages"`
+		Messages    []agentChatMsg `json:"messages"`
+		MapProvider string         `json:"map_provider"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式无效: " + err.Error()})
+		return
+	}
+	provider, err := ParseMapProvider(req.MapProvider)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	a, err := s.buildRouteAgent(c, provider)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -89,7 +109,7 @@ func (s *Server) agentChat(c *gin.Context) {
 	}
 
 	ndjsonHeaders(c)
-	s.finishAgentRun(c, func() (string, []agent.Step, error) {
+	s.finishAgentRun(c, provider, func() (string, []agent.Step, error) {
 		return a.Run(c.Request.Context(), msgs)
 	})
 }

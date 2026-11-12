@@ -55,8 +55,8 @@ func TestDistanceMatrixRequestsAndConversion(t *testing.T) {
 	// 实测高德批量语义是"多个起点 → 单个终点",这里就按这个断言。
 	type req struct{ origins, destination string }
 	var (
-		mu  sync.Mutex             // 保护 got:并发版 drivingMatrix 会同时调 handler,
-		got = map[string]req{}     // 测试代码自己也得并发安全,否则 -race 先抓的是测试
+		mu  sync.Mutex         // 保护 got:并发版 drivingMatrix 会同时调 handler,
+		got = map[string]req{} // 测试代码自己也得并发安全,否则 -race 先抓的是测试
 	)
 	srv, _ := fakeAmap(t, func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()

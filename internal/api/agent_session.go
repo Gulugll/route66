@@ -12,6 +12,7 @@ package api
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sync"
@@ -26,6 +27,7 @@ import (
 const agentSessionTTL = 15 * time.Minute
 
 type agentSessionEntry struct {
+	provider  string // 地图 MCP 模式(""=默认);恢复时按它重建同一工具集
 	pending   agent.Pending
 	expiresAt time.Time
 }
@@ -41,34 +43,34 @@ func newAgentSessions() *agentSessions {
 	return &agentSessions{m: make(map[string]agentSessionEntry)}
 }
 
-func (s *agentSessions) put(p agent.Pending) string {
+func (s *agentSessions) put(provider string, p agent.Pending) string {
 	s.gc()
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		// 随机源失败极罕见;回退到时间纳秒仍满足"不可猜"以外的可用性
-		id := hex.EncodeToString([]byte(time.Now().String()))[:32]
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.m[id] = agentSessionEntry{pending: p, expiresAt: time.Now().Add(agentSessionTTL)}
-		return id
-	}
-	id := hex.EncodeToString(buf)
+	id := s.newID()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.m[id] = agentSessionEntry{pending: p, expiresAt: time.Now().Add(agentSessionTTL)}
+	s.m[id] = agentSessionEntry{provider: provider, pending: p, expiresAt: time.Now().Add(agentSessionTTL)}
 	return id
 }
 
-func (s *agentSessions) take(id string) (agent.Pending, bool) {
+func (s *agentSessions) take(id string) (string, agent.Pending, bool) {
 	s.gc()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.m[id]
 	if !ok {
-		return agent.Pending{}, false
+		return "", agent.Pending{}, false
 	}
 	delete(s.m, id)
-	return e.pending, true
+	return e.provider, e.pending, true
+}
+
+func (s *agentSessions) newID() string {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		// 随机源失败极罕见;回退到时间纳秒仍满足"不可猜"以外的可用性
+		return hex.EncodeToString([]byte(time.Now().String()))[:32]
+	}
+	return hex.EncodeToString(buf)
 }
 
 // gc 惰性清理过期会话:put/take 顺手扫一遍,O(n) 但 n 是活跃确认数,个位数。
@@ -83,10 +85,11 @@ func (s *agentSessions) gc() {
 	}
 }
 
-// buildRouteAgent 组装 RouteBot。/agent 与 /agent/resume 必须用同一配置
-// (同一套工具与人设),否则确认前后的工具集不一致会直接改变行为。
+// buildRouteAgent 组装 RouteBot。/agent 与 /agent/resume、/agent/tool_result
+// 必须用同一配置(同一套工具与人设)——provider 存会话,恢复时按存储值重建,
+// 否则确认/回填前后的工具集不一致会直接改变行为。
 // 返回 error 表示 LLM 未配置,调用方回 503。
-func (s *Server) buildRouteAgent(c *gin.Context) (*agent.Agent, error) {
+func (s *Server) buildRouteAgent(c *gin.Context, provider string) (*agent.Agent, error) {
 	ctx := c.Request.Context()
 	apiKey := s.settingOr(ctx, settings.KeyLLMAPIKey)
 	if apiKey == "" {
@@ -106,11 +109,19 @@ func (s *Server) buildRouteAgent(c *gin.Context) (*agent.Agent, error) {
 	if model == nil {
 		model = agent.NewOpenAICompatible(baseURL, apiKey, modelName)
 	}
+	prompt := agentSystemPrompt
+	tools := agent.RouteTools(s.matrix, s.src, s.searcher)
+	if provider != "" {
+		// MCP 模式:检索与规划委托前端直连厂商执行(工具集换成委托执行型)
+		tools = agent.MCPRouteTools(s.searcher)
+		prompt += "用户已绑定地图服务(" + provider + " 的 MCP 模式):" +
+			"search_place 与 plan_route 由用户设备直连地图服务执行并自动回填;" +
+			"引用结果时如实转告降级警告。"
+	}
 	return &agent.Agent{
-		Model: model,
-		// 搜索与距离是两个来源:search_place 走 searcher(photon),距离走 src(valhalla)
-		Tools:         agent.RouteTools(s.matrix, s.src, s.searcher),
-		SystemPrompt:  agentSystemPrompt,
+		Model:         model,
+		Tools:         tools,
+		SystemPrompt:  prompt,
 		MaxIterations: 8,
 		// OnStep 在 Run 的同一 goroutine 里被调用,直接写响应流是安全的;
 		// 客户端断开后 Write 静默失败,循环跑完自然退出。
@@ -131,18 +142,33 @@ func (s *Server) buildRouteAgent(c *gin.Context) (*agent.Agent, error) {
 }
 
 // finishAgentRun 统一处理循环的三种结局:
-// 确认请求 → 存会话发 confirm 事件;错误 → error 事件;正常 → done 事件。
-// run 闭包装着 Run 或 Resume,二者结局形状相同。
-func (s *Server) finishAgentRun(c *gin.Context, run func() (string, []agent.Step, error)) {
+// 确认请求 → 存会话发 confirm 事件;前端委托执行 → 存会话发 tool_exec 事件;
+// 错误 → error 事件;正常 → done 事件。
+// run 闭包装着 Run / Resume / ResumeExec,三者结局形状相同。
+func (s *Server) finishAgentRun(c *gin.Context, provider string, run func() (string, []agent.Step, error)) {
 	answer, _, err := run()
 	var cn *agent.ConfirmNeeded
 	if errors.As(err, &cn) {
-		sid := s.sessions.put(cn.Pending)
+		sid := s.sessions.put(provider, cn.Pending)
 		writeNDJSON(c, gin.H{
 			"type":       "confirm",
 			"session_id": sid,
 			"prompt":     cn.Pending.Prompt,
 			"options":    cn.Pending.Options,
+		})
+		return
+	}
+	var ex *agent.ExecSuspended
+	if errors.As(err, &ex) {
+		sid := s.sessions.put(provider, ex.Pending)
+		task := ex.Pending.Task
+		writeNDJSON(c, gin.H{
+			"type":       "tool_exec",
+			"session_id": sid,
+			"phase":      task.Phase,
+			"tool":       ex.Pending.Call.Function.Name,
+			"params":     task.Params,
+			"hint":       task.Hint,
 		})
 		return
 	}
@@ -167,18 +193,57 @@ func (s *Server) agentResume(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id 与 answer(≤300 字)必填"})
 		return
 	}
-	pending, ok := s.sessions.take(req.SessionID)
+	provider, pending, ok := s.sessions.take(req.SessionID)
 	if !ok {
 		c.JSON(http.StatusGone, gin.H{"error": "确认已过期或不存在,请重新提问"})
 		return
 	}
-	a, err := s.buildRouteAgent(c)
+	a, err := s.buildRouteAgent(c, provider)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 		return
 	}
 	ndjsonHeaders(c)
-	s.finishAgentRun(c, func() (string, []agent.Step, error) {
+	s.finishAgentRun(c, provider, func() (string, []agent.Step, error) {
 		return a.Resume(c.Request.Context(), pending, req.Answer)
+	})
+}
+
+// agentToolResult POST /agent/tool_result:前端直连地图 MCP 执行完毕后回填续跑。
+// provider 从会话取 —— 恢复时按首次请求的配置重建,不信任回填请求。
+func (s *Server) agentToolResult(c *gin.Context) {
+	var req struct {
+		SessionID string          `json:"session_id"`
+		Result    json.RawMessage `json:"result"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式无效: " + err.Error()})
+		return
+	}
+	if req.SessionID == "" || len(req.Result) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id 与 result 必填"})
+		return
+	}
+	if len(req.Result) > agentToolResultLimit {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "result 超过体积上限"})
+		return
+	}
+	provider, pending, ok := s.sessions.take(req.SessionID)
+	if !ok {
+		c.JSON(http.StatusGone, gin.H{"error": "执行会话已过期或不存在,请重新提问"})
+		return
+	}
+	if pending.Kind != "exec" {
+		c.JSON(http.StatusConflict, gin.H{"error": "该会话不是前端执行任务,请走 /agent/resume"})
+		return
+	}
+	a, err := s.buildRouteAgent(c, provider)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return
+	}
+	ndjsonHeaders(c)
+	s.finishAgentRun(c, provider, func() (string, []agent.Step, error) {
+		return a.ResumeExec(c.Request.Context(), pending, string(req.Result))
 	})
 }

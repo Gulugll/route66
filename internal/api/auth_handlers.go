@@ -12,6 +12,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 
 	"github.com/gin-gonic/gin"
 
@@ -19,90 +20,47 @@ import (
 	"awesomeProject/internal/settings"
 )
 
-// register 注册新用户。成功后**顺便登录**(发会话 cookie)——
-// 注册成功再让人打一遍密码是纯折磨,业界主流做法也是注册即登录。
-// 复用 Login 而不是另写一份"发会话"逻辑:登录的入口永远只有一个。
-func (s *Server) register(c *gin.Context) {
-	// 限流闸门放在一切之前(含参数绑定)——坏请求也别想消耗服务端资源。
-	// 复用 LoginLimiter 类型:注册没有"失败"语义,Check 放行 + 成功后 Reset 即可。
-	if s.registerLimiter != nil {
-		if err := s.registerLimiter.Check(c.Request.Context(), c.ClientIP()); err != nil {
-			c.Header("Retry-After", "60")
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
-			return
-		}
-	}
-	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数格式错误"})
-		return
-	}
-	_, err := s.auth.Register(c.Request.Context(), req.Username, req.Password)
+// oidcLogin 发起联合登录：302 跳转到 Casdoor 授权页。
+// ?return_to=/xxx 登录后回跳（仅本站相对路径）；?prompt=login 强制重登（换账号）。
+func (s *Server) oidcLogin(c *gin.Context) {
+	loginURL, err := s.oidc.StartLogin(c.Request.Context(), c.Query("return_to"), c.Query("prompt") == "login")
 	if err != nil {
-		// 存储故障 → 503 + 固定文案(原文里是 DSN/驱动报错,不能透给前端);
-		// 服务端日志补记原文,排查不丢线索
-		if errors.Is(err, auth.ErrStorageUnavailable) {
-			log.Printf("[auth] register storage error: %v", err)
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "注册服务暂时不可用，请稍后重试"})
-			return
-		}
-		status := http.StatusBadRequest
-		if errors.Is(err, auth.ErrUsernameTaken) {
-			status = http.StatusConflict
+		status := http.StatusInternalServerError
+		if errors.Is(err, auth.ErrInvalidReturnTo) {
+			status = http.StatusBadRequest
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
-	if s.registerLimiter != nil {
-		s.registerLimiter.Reset(c.Request.Context(), c.ClientIP())
-	}
-	s.loginAndStartSession(c, req.Username, req.Password)
-}
-
-// login 登录。凭据错返回 401,文案由 auth 包统一(防用户名枚举)。
-func (s *Server) login(c *gin.Context) {
-	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数格式错误"})
+	parsed, err := url.Parse(loginURL)
+	if err != nil || parsed.Query().Get("state") == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "授权 URL 缺少 state"})
 		return
 	}
-	s.loginAndStartSession(c, req.Username, req.Password)
+	// state 同时进 cookie，回调时与 URL 里的 state 比对（防 CSRF/会话固定）
+	c.SetCookie(auth.StateCookieName, parsed.Query().Get("state"), 600, "/", "", auth.CookieSecure, true)
+	c.Redirect(http.StatusFound, loginURL)
 }
 
-// loginAndStartSession 登录/注册成功的共同尾部:发 cookie + 返回用户信息。
-// token 只进 HttpOnly cookie,**绝不**放进 JSON body —— 一旦进了 body,
-// 前端就得存 localStorage,XSS 一偷一个准,HttpOnly 的意义就没了。
-func (s *Server) loginAndStartSession(c *gin.Context, username, password string) {
-	u, token, err := s.auth.Login(c.Request.Context(), c.ClientIP(), username, password)
+// oidcCallback 授权回调：验 state → 换 token → 建档 → 发会话 → 回跳。
+func (s *Server) oidcCallback(c *gin.Context) {
+	browserState := ""
+	if cookie, err := c.Cookie(auth.StateCookieName); err == nil {
+		browserState = cookie
+	}
+	c.SetCookie(auth.StateCookieName, "", -1, "/", "", auth.CookieSecure, true)
+	result, err := s.oidc.Callback(c.Request.Context(), c.Query("state"), c.Query("code"), browserState)
 	if err != nil {
-		if errors.Is(err, auth.ErrBadCredentials) {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
-			return
+		status := http.StatusInternalServerError
+		if errors.Is(err, auth.ErrInvalidState) || errors.Is(err, auth.ErrNotAllowed) {
+			status = http.StatusBadRequest
 		}
-		// 限速:密码还没校验就被闸门拦下,429 + Retry-After 提示稍后再试
-		if errors.Is(err, auth.ErrLoginThrottled) {
-			c.Header("Retry-After", "60")
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
-			return
-		}
-		// 存储故障(数据库没起/连接断) → 503 + 固定文案,
-		// 原文(DSN/驱动报错)只进服务端日志 —— 前端不该看到内部细节
-		if errors.Is(err, auth.ErrStorageUnavailable) {
-			log.Printf("[auth] login storage error: %v", err)
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "登录服务暂时不可用，请稍后重试"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "登录失败: " + err.Error()})
+		log.Printf("[auth] oidc callback error: %v", err)
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
-	auth.SetSessionCookie(c, token, int(auth.SessionTTL.Seconds()))
-	c.JSON(http.StatusOK, gin.H{"user": u})
+	auth.SetSessionCookie(c, result.Token, int(auth.SessionTTL.Seconds()))
+	c.Redirect(http.StatusFound, result.ReturnTo)
 }
 
 // logout 登出:删服务端会话 + 让浏览器扔 cookie。两步缺一不可

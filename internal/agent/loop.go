@@ -42,9 +42,9 @@ func (a *Agent) Run(ctx context.Context, msgs []Message) (string, []Step, error)
 	return a.runLoop(ctx, history, nil)
 }
 
-// Resume 从一次 HITL 暂停恢复:以用户答复执行确认工具,同轮其余调用重跑补齐
+// Resume 从一次 HITL 确认暂停恢复:以用户答复执行确认工具,同轮其余调用重跑补齐
 // tool 消息(OpenAI 协议要求每个 call 都有对账结果),然后继续循环。
-// 可能再次返回 *ConfirmNeeded(链式确认),继续 Resume 即可。
+// 可能再次返回 *ConfirmNeeded 或 *ExecSuspended(链式),继续 Resume/ResumeExec 即可。
 func (a *Agent) Resume(ctx context.Context, p Pending, answer string) (string, []Step, error) {
 	var conf Confirmable
 	for _, t := range a.Tools {
@@ -60,29 +60,71 @@ func (a *Agent) Resume(ctx context.Context, p Pending, answer string) (string, [
 		return "", p.Steps, fmt.Errorf("agent: 工具 %q 不支持确认续跑", p.Call.Function.Name)
 	}
 
-	// 同轮其余调用从 history 末条 assistant 消息取回(挂起轮全部无结果)
+	history, err := a.replaySiblings(ctx, p)
+	if err != nil {
+		return "", p.Steps, err
+	}
+	out, err := conf.RunConfirmed(ctx, json.RawMessage(p.Call.Function.Arguments), answer)
+	if err != nil {
+		return "", p.Steps, fmt.Errorf("agent: 确认执行失败: %w", err)
+	}
+	history = append(history, NewToolMsg(p.Call.ID, out))
+	return a.runLoop(ctx, history, p.Steps)
+}
+
+// ResumeExec 从一次前端委托执行暂停恢复:以前端回传结果续跑该工具,
+// 其余语义与 Resume 相同(兄弟调用补齐、链式再挂起、继续循环)。
+func (a *Agent) ResumeExec(ctx context.Context, p Pending, result string) (string, []Step, error) {
+	tool, ok := a.toolIndex()[p.Call.Function.Name]
+	if !ok {
+		return "", p.Steps, fmt.Errorf("agent: 工具 %q 不存在", p.Call.Function.Name)
+	}
+	d, ok := tool.(Deferred)
+	if !ok {
+		return "", p.Steps, fmt.Errorf("agent: 工具 %q 不支持前端执行回填", p.Call.Function.Name)
+	}
+	if p.Task == nil {
+		return "", p.Steps, fmt.Errorf("agent: exec 会话缺少执行任务")
+	}
+
+	history, err := a.replaySiblings(ctx, p)
+	if err != nil {
+		return "", p.Steps, err
+	}
+	out, err := d.RunWithResult(ctx, json.RawMessage(p.Call.Function.Arguments), *p.Task, result)
+	if err != nil {
+		// 链式执行:工具请求再挂一阶段,状态延续同一调用
+		if en, ok := err.(*ExecNeeded); ok {
+			return "", p.Steps, &ExecSuspended{Pending: Pending{
+				Kind:    "exec",
+				Call:    p.Call,
+				Task:    &en.Task,
+				History: history,
+				Steps:   p.Steps,
+			}}
+		}
+		return "", p.Steps, fmt.Errorf("agent: 前端执行结果处理失败: %w", err)
+	}
+	history = append(history, NewToolMsg(p.Call.ID, out))
+	return a.runLoop(ctx, history, p.Steps)
+}
+
+// replaySiblings 从挂起状态恢复公共前置:同轮其余调用重跑补齐 tool 消息
+// (挂起轮全部无结果;搜索类幂等,重跑安全)。
+func (a *Agent) replaySiblings(ctx context.Context, p Pending) ([]Message, error) {
+	byName := a.toolIndex()
 	var siblings []ToolCall
 	if n := len(p.History); n > 0 && len(p.History[n-1].ToolCalls) > 0 {
 		siblings = p.History[n-1].ToolCalls
 	}
-
-	byName := a.toolIndex()
 	history := append([]Message(nil), p.History...)
-	steps := p.Steps
-	// ponytail: 同轮混合"确认+普通"调用时普通调用重跑(搜索类幂等);
-	// 系统提示词约束下一轮一确认是常态,真出现高频重跑再改结果缓存
 	for _, call := range siblings {
 		if call.ID == p.Call.ID {
 			continue
 		}
 		history = append(history, NewToolMsg(call.ID, a.execTool(ctx, byName, call)))
 	}
-	out, err := conf.RunConfirmed(ctx, json.RawMessage(p.Call.Function.Arguments), answer)
-	if err != nil {
-		return "", steps, fmt.Errorf("agent: 确认执行失败: %w", err)
-	}
-	history = append(history, NewToolMsg(p.Call.ID, out))
-	return a.runLoop(ctx, history, steps)
+	return history, nil
 }
 
 // runLoop 循环本体,Run 与 Resume 共用。history 必须以 system 或 user 开头,
@@ -122,6 +164,8 @@ func (a *Agent) runLoop(ctx context.Context, history []Message, steps []Step) (s
 			mu         sync.Mutex
 			confirmErr *ConfirmError
 			confirmIdx = -1
+			execErr    *ExecNeeded
+			execIdx    = -1
 		)
 		var wg sync.WaitGroup
 		for idx, call := range completion.Calls {
@@ -135,6 +179,15 @@ func (a *Agent) runLoop(ctx context.Context, history []Message, steps []Step) (s
 					mu.Lock()
 					if confirmErr == nil {
 						confirmErr, confirmIdx = ce, idx
+					}
+					mu.Unlock()
+					return
+				}
+				if en, ok := err.(*ExecNeeded); ok {
+					// 委托执行同语义:一轮只挂第一个,其余重跑补齐
+					mu.Lock()
+					if execErr == nil {
+						execErr, execIdx = en, idx
 					}
 					mu.Unlock()
 					return
@@ -159,9 +212,29 @@ func (a *Agent) runLoop(ctx context.Context, history []Message, steps []Step) (s
 				a.OnStep(step)
 			}
 			return "", steps, &ConfirmNeeded{Pending: Pending{
+				Kind:    "confirm",
 				Call:    completion.Calls[confirmIdx],
 				Prompt:  confirmErr.Prompt,
 				Options: confirmErr.Options,
+				History: history,
+				Steps:   steps,
+			}}
+		}
+
+		// 委托执行请求:与确认同构的整轮挂起,任务下发前端直连地图 MCP 执行。
+		if execErr != nil {
+			step.Results = make([]string, len(completion.Calls))
+			for j := range step.Results {
+				step.Results[j] = "等待前端执行"
+			}
+			steps = append(steps, step)
+			if a.OnStep != nil {
+				a.OnStep(step)
+			}
+			return "", steps, &ExecSuspended{Pending: Pending{
+				Kind:    "exec",
+				Call:    completion.Calls[execIdx],
+				Task:    &execErr.Task,
 				History: history,
 				Steps:   steps,
 			}}

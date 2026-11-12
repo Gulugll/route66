@@ -26,7 +26,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/go-sql-driver/mysql"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -45,6 +44,9 @@ const SessionTTL = 7 * 24 * time.Hour
 // cookie 按 host 隔离不按端口隔离,同名才能共享登录态(这是设计,不是巧合)。
 const CookieName = "rp_session"
 
+// StateCookieName OIDC 登录 state 的 cookie 名（与 URL state 双提交比对用）。
+const StateCookieName = "rp_oidc_state"
+
 // 用户角色。user = 普通用户;admin = 能进管理端配 key。
 // 角色存在 users 表里而不是"admins 表",因为"是不是管理员"是用户的属性,
 // 一人一行,查询不需要 JOIN。
@@ -61,9 +63,13 @@ type User struct {
 	Role         string `gorm:"column:role;type:varchar(16);not null;default:'user'" json:"role"`
 	// 社区身份层(M1)。可空:空昵称时前端回退显示 username。
 	// 不带 not null —— AutoMigrate 对已有表加可空列无需回填默认值。
-	Nickname  string    `gorm:"column:nickname;type:varchar(32)" json:"nickname"`
-	AvatarURL string    `gorm:"column:avatar_url;type:varchar(255)" json:"avatar_url"`
-	Bio       string    `gorm:"column:bio;type:varchar(200)" json:"bio"`
+	Nickname  string `gorm:"column:nickname;type:varchar(32)" json:"nickname"`
+	AvatarURL string `gorm:"column:avatar_url;type:varchar(255)" json:"avatar_url"`
+	Bio       string `gorm:"column:bio;type:varchar(200)" json:"bio"`
+	// OIDC 身份映射（联合登录）：issuer+sub 是外部身份的唯一键。
+	// 本地用户/历史账号这两列为空。
+	Issuer    string    `gorm:"column:issuer;type:varchar(128);index:idx_issuer_sub,unique" json:"-"`
+	Sub       string    `gorm:"column:sub;type:varchar(128);index:idx_issuer_sub,unique" json:"-"`
 	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
 }
 
@@ -84,6 +90,8 @@ func (Session) TableName() string { return "sessions" }
 type Store interface {
 	CreateUser(ctx context.Context, u *User) error
 	GetUserByName(ctx context.Context, username string) (User, error)
+	// GetUserBySub 按 OIDC issuer+sub 查用户；查无此人返回 ErrNotFound。
+	GetUserBySub(ctx context.Context, issuer, sub string) (User, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	ListUsers(ctx context.Context) ([]User, error)
 	CreateSession(ctx context.Context, s *Session) error
@@ -113,12 +121,15 @@ func (s *GormStore) Migrate(ctx context.Context) error {
 	return s.db.WithContext(ctx).AutoMigrate(&User{}, &Session{})
 }
 
-// isDuplicateKey 判断是否唯一约束冲突。用 errors.As 拿 *mysql.MySQLError
-// 的 Number(1062),不匹配报错文案 —— 文案是驱动实现细节,类型才是契约。
-// 旧 PG 方案用 strings.Contains("duplicate key") 匹配文案,换库即静默失效。
+// isDuplicateKey 判断是否唯一约束冲突。SQLite 版：
+// modernc 驱动的 *sqlite.Error 提供 Code()，低 8 位 19 = SQLITE_CONSTRAINT；
+// 同时兜底匹配文案，防驱动包装层级变化。
 func isDuplicateKey(err error) bool {
-	var me *mysql.MySQLError
-	return errors.As(err, &me) && me.Number == 1062
+	var ce interface{ Code() int }
+	if errors.As(err, &ce) && ce.Code()&0xFF == 19 {
+		return true
+	}
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
 func (s *GormStore) CreateUser(ctx context.Context, u *User) error {
@@ -133,6 +144,12 @@ func (s *GormStore) CreateUser(ctx context.Context, u *User) error {
 func (s *GormStore) GetUserByName(ctx context.Context, username string) (User, error) {
 	var u User
 	err := s.db.WithContext(ctx).Where("username = ?", username).First(&u).Error
+	return fromGorm(u, err)
+}
+
+func (s *GormStore) GetUserBySub(ctx context.Context, issuer, sub string) (User, error) {
+	var u User
+	err := s.db.WithContext(ctx).Where("issuer = ? AND sub = ?", issuer, sub).First(&u).Error
 	return fromGorm(u, err)
 }
 
@@ -204,6 +221,10 @@ func fromGorm(u User, err error) (User, error) {
 type Service struct {
 	store   Store
 	limiter LoginLimiter
+	// localMode：NoAuth 独立部署。所有请求自动以 localUser 身份通过，
+	// 登录墙/角色门禁退化为本地单用户（与复磐独立模式同语义）。
+	localMode bool
+	localUser User
 }
 
 // Option 装配可选项。可变参让 NewService(store) 的旧调用保持兼容。
@@ -211,6 +232,31 @@ type Option func(*Service)
 
 // WithLimiter 挂登录限速器。不挂 = 不限速(本地开发/Redis 不可用的降级形态)。
 func WithLimiter(l LoginLimiter) Option { return func(s *Service) { s.limiter = l } }
+
+// WithLocalMode 开启本地无登录模式：u 为自动注入的本地用户（通常 admin 角色）。
+func WithLocalMode(u User) Option {
+	return func(s *Service) {
+		s.localMode = true
+		s.localUser = u
+	}
+}
+
+// EnsureLocalUser 确保本地用户存在（NoAuth 模式启动时调用）。
+// 用户名 local，角色 admin（本机管理端可用）；已存在则直接返回。
+func (s *Service) EnsureLocalUser(ctx context.Context) (User, error) {
+	u, err := s.store.GetUserByName(ctx, "local")
+	if err == nil {
+		return u, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return User{}, err
+	}
+	u = User{Username: "local", Nickname: "本地用户", Role: RoleAdmin, PasswordHash: "none"}
+	if err := s.store.CreateUser(ctx, &u); err != nil {
+		return User{}, err
+	}
+	return u, nil
+}
 
 func NewService(store Store, opts ...Option) *Service {
 	s := &Service{store: store}

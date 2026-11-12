@@ -6,6 +6,81 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useAgent } from '../hooks/useAgent.js'
+import { PROVIDERS, verifyBinding } from '../mcp/providers.js'
+import { clearBinding, getBinding, saveBinding } from '../mcp/settings.js'
+
+// 地图数据源绑定:key 只存本设备 localStorage,调用由浏览器直连所选厂商,
+// 后端不经手密钥(合规立场的实现落点)。百度端点无 CORS 头,Web 端禁选。
+function MapSourceSettings() {
+  const [open, setOpen] = useState(false)
+  const [provider, setProvider] = useState('')
+  const [key, setKey] = useState('')
+  const [status, setStatus] = useState(null) // {tone:'ok'|'error', text}
+  const [checking, setChecking] = useState(false)
+  const bound = getBinding()
+
+  const bind = async () => {
+    if (!provider || !key.trim()) {
+      setStatus({ tone: 'error', text: '请选择服务并填写 Key' })
+      return
+    }
+    setChecking(true)
+    setStatus(null)
+    try {
+      const count = await verifyBinding(provider, key.trim())
+      saveBinding(provider, key.trim())
+      setStatus({ tone: 'ok', text: `已连接 ${PROVIDERS[provider].label}（${count} 个工具可用）` })
+    } catch (err) {
+      setStatus({ tone: 'error', text: err.message })
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  return (
+    <div className="map-source">
+      <button className="map-source-toggle" onClick={() => setOpen((v) => !v)}>
+        地图数据源：{bound ? `已绑定 ${PROVIDERS[bound.provider]?.label || bound.provider}` : '默认'}
+      </button>
+      {open && (
+        <div className="map-source-panel">
+          <select value={provider} onChange={(e) => setProvider(e.target.value)}>
+            <option value="">选择要绑定的服务…</option>
+            {Object.entries(PROVIDERS).map(([id, p]) => (
+              <option key={id} value={id} disabled={!p.web}>
+                {p.label}
+                {!p.web ? '（仅 App 端可用）' : ''}
+              </option>
+            ))}
+          </select>
+          <input
+            type="password"
+            placeholder={provider ? '粘贴你的 Web服务 Key' : '先选服务再填 Key'}
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+          />
+          <button onClick={bind} disabled={checking}>
+            {checking ? '校验中…' : '校验并绑定'}
+          </button>
+          {bound && (
+            <button onClick={() => { clearBinding(); setKey(''); setStatus({ tone: 'ok', text: '已恢复默认数据源' }) }}>
+              恢复默认
+            </button>
+          )}
+          <div className="map-source-note">
+            Key 属于你本人，保存在本设备；查询请求由你的浏览器直接发送到所选地图服务商，
+            本平台不经手、不存储。未绑定时使用默认数据源。
+          </div>
+          {status && (
+            <div style={{ color: status.tone === 'ok' ? 'var(--accent)' : 'var(--danger, #c0392b)', fontSize: 12 }}>
+              {status.text}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 const SUGGESTIONS = [
   '帮我规划一条从天安门出发，途经故宫再到天坛的驾车路线',
@@ -124,6 +199,8 @@ export function AgentPane({ onCollapse, onPlan }) {
         <button className="agent-collapse" onClick={onCollapse}>收起 ▶</button>
       </div>
 
+      <MapSourceSettings />
+
       <div className="agent-body" ref={bodyRef} onScroll={onScroll}>
         {threads.length === 0 && !unavailable && (
           <div className="suggest">
@@ -156,6 +233,15 @@ export function AgentPane({ onCollapse, onPlan }) {
             return (
               <ConfirmCard key={i} prompt={m.prompt} options={m.options} busy={busy}
                 onAnswer={(answer) => respond(m.sessionId, answer)} />
+            )
+          }
+          if (m.kind === 'exec') {
+            // 委托执行卡片:留在对话里作为"这步用了你绑定的地图服务"的可见记录
+            return (
+              <div key={i} className="msg msg-confirm">
+                {m.provider ? `已通过 ${m.provider} 执行：` : '地图服务执行：'}
+                {m.hint}
+              </div>
             )
           }
           if (m.kind === 'error') {
